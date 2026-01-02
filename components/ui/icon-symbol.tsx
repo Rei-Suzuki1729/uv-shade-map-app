@@ -18,6 +18,20 @@ const MAPPING = {
   "paperplane.fill": "send",
   "chevron.left.forwardslash.chevron.right": "code",
   "chevron.right": "chevron-right",
+  // UV Shade Map用アイコン
+  "map.fill": "map",
+  "location.fill": "near-me",
+  "gearshape.fill": "settings",
+  "sun.max.fill": "wb-sunny",
+  "cloud.sun.fill": "wb-cloudy",
+  "building.2.fill": "apartment",
+  "figure.walk": "directions-walk",
+  "arrow.triangle.turn.up.right.diamond.fill": "navigation",
+  "magnifyingglass": "search",
+  "xmark": "close",
+  "checkmark.circle.fill": "check-circle",
+  "info.circle.fill": "info",
+  "exclamationmark.triangle.fill": "warning",
 } as IconMapping;
 
 /**
