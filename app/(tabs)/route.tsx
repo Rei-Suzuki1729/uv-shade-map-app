@@ -3,7 +3,7 @@
  * 日陰優先のルート検索と比較
  */
 
-import React, { useState, useCallback, useMemo } from 'react';
+import React, { useState, useCallback } from 'react';
 import {
   View,
   Text,
@@ -21,25 +21,23 @@ import * as Haptics from 'expo-haptics';
 
 import { ScreenContainer } from '@/components/screen-container';
 import { useColorScheme } from '@/hooks/use-color-scheme';
-import { useLocation } from '@/hooks/use-location';
 
 interface RouteOption {
   id: string;
   name: string;
-  duration: number; // 分
-  distance: number; // メートル
+  duration: number;
+  distance: number;
   shadePercentage: number;
-  uvExposure: number; // 相対値 0-100
+  uvExposure: number;
   isRecommended: boolean;
 }
 
-// サンプルルートデータ
 const generateSampleRoutes = (distance: number): RouteOption[] => [
   {
     id: 'shade-priority',
     name: '日陰優先ルート',
-    duration: Math.round(distance / 60), // 時速3.6km想定
-    distance: Math.round(distance * 1.15), // 15%長め
+    duration: Math.round(distance / 60),
+    distance: Math.round(distance * 1.15),
     shadePercentage: 78,
     uvExposure: 22,
     isRecommended: true,
@@ -68,15 +66,12 @@ export default function RouteScreen() {
   const insets = useSafeAreaInsets();
   const colorScheme = useColorScheme();
   const isDark = colorScheme === 'dark';
-  const { location } = useLocation();
 
-  // 状態
   const [destination, setDestination] = useState('');
   const [isSearching, setIsSearching] = useState(false);
   const [routes, setRoutes] = useState<RouteOption[]>([]);
   const [selectedRoute, setSelectedRoute] = useState<string | null>(null);
 
-  // ルート検索
   const searchRoutes = useCallback(async () => {
     if (!destination.trim()) return;
 
@@ -88,10 +83,8 @@ export default function RouteScreen() {
     setRoutes([]);
     setSelectedRoute(null);
 
-    // シミュレーション：実際にはAPIを呼び出す
     await new Promise(resolve => setTimeout(resolve, 1500));
 
-    // サンプルデータを生成（距離は500m〜2kmのランダム）
     const baseDistance = 500 + Math.random() * 1500;
     const generatedRoutes = generateSampleRoutes(baseDistance);
     
@@ -100,7 +93,6 @@ export default function RouteScreen() {
     setIsSearching(false);
   }, [destination]);
 
-  // ルート選択
   const selectRoute = useCallback((routeId: string) => {
     if (Platform.OS !== 'web') {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
@@ -108,14 +100,11 @@ export default function RouteScreen() {
     setSelectedRoute(routeId);
   }, []);
 
-  // ナビゲーション開始
   const startNavigation = useCallback(() => {
     if (Platform.OS !== 'web') {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     }
-    // TODO: ナビゲーション画面に遷移
-    console.log('Start navigation with route:', selectedRoute);
-  }, [selectedRoute]);
+  }, []);
 
   return (
     <ScreenContainer>
@@ -141,7 +130,6 @@ export default function RouteScreen() {
 
           {/* 検索フォーム */}
           <View style={[styles.searchForm, { backgroundColor: isDark ? '#1E293B' : '#FFFFFF' }]}>
-            {/* 出発地 */}
             <View style={styles.inputRow}>
               <View style={[styles.inputIcon, { backgroundColor: '#22C55E20' }]}>
                 <MaterialIcons name="my-location" size={18} color="#22C55E" />
@@ -158,7 +146,6 @@ export default function RouteScreen() {
 
             <View style={[styles.inputDivider, { backgroundColor: isDark ? '#334155' : '#E2E8F0' }]} />
 
-            {/* 目的地 */}
             <View style={styles.inputRow}>
               <View style={[styles.inputIcon, { backgroundColor: '#EF444420' }]}>
                 <MaterialIcons name="place" size={18} color="#EF4444" />
@@ -213,9 +200,6 @@ export default function RouteScreen() {
               <Text style={[styles.sectionTitle, { color: isDark ? '#F8FAFC' : '#0F172A' }]}>
                 ルート候補
               </Text>
-              <Text style={[styles.sectionSubtitle, { color: isDark ? '#94A3B8' : '#64748B' }]}>
-                UV露出を最小化するルートを推奨しています
-              </Text>
 
               {routes.map((route) => (
                 <Pressable
@@ -231,7 +215,6 @@ export default function RouteScreen() {
                     },
                   ]}
                 >
-                  {/* ルート名とバッジ */}
                   <View style={styles.routeHeader}>
                     <View style={styles.routeNameRow}>
                       <Text style={[styles.routeName, { color: isDark ? '#F8FAFC' : '#0F172A' }]}>
@@ -249,7 +232,6 @@ export default function RouteScreen() {
                     )}
                   </View>
 
-                  {/* ルート詳細 */}
                   <View style={styles.routeDetails}>
                     <View style={styles.routeDetailItem}>
                       <MaterialIcons name="schedule" size={16} color={isDark ? '#94A3B8' : '#64748B'} />
@@ -265,15 +247,11 @@ export default function RouteScreen() {
                     </View>
                   </View>
 
-                  {/* 日陰率とUV露出 */}
                   <View style={styles.routeStats}>
                     <View style={styles.routeStat}>
-                      <View style={styles.routeStatHeader}>
-                        <MaterialIcons name="wb-shade" size={14} color="#22C55E" />
-                        <Text style={[styles.routeStatLabel, { color: isDark ? '#94A3B8' : '#64748B' }]}>
-                          日陰率
-                        </Text>
-                      </View>
+                      <Text style={[styles.routeStatLabel, { color: isDark ? '#94A3B8' : '#64748B' }]}>
+                        日陰率
+                      </Text>
                       <Text style={[styles.routeStatValue, { color: '#22C55E' }]}>
                         {route.shadePercentage}%
                       </Text>
@@ -282,12 +260,9 @@ export default function RouteScreen() {
                       </View>
                     </View>
                     <View style={styles.routeStat}>
-                      <View style={styles.routeStatHeader}>
-                        <MaterialIcons name="wb-sunny" size={14} color="#EF4444" />
-                        <Text style={[styles.routeStatLabel, { color: isDark ? '#94A3B8' : '#64748B' }]}>
-                          UV露出
-                        </Text>
-                      </View>
+                      <Text style={[styles.routeStatLabel, { color: isDark ? '#94A3B8' : '#64748B' }]}>
+                        UV露出
+                      </Text>
                       <Text style={[styles.routeStatValue, { color: '#EF4444' }]}>
                         {route.uvExposure}%
                       </Text>
@@ -299,7 +274,6 @@ export default function RouteScreen() {
                 </Pressable>
               ))}
 
-              {/* ナビゲーション開始ボタン */}
               {selectedRoute && (
                 <Pressable
                   onPress={startNavigation}
@@ -315,30 +289,16 @@ export default function RouteScreen() {
             </View>
           )}
 
-          {/* 説明 */}
+          {/* 説明（初期状態） */}
           {routes.length === 0 && !isSearching && (
             <View style={styles.infoSection}>
               <View style={[styles.infoCard, { backgroundColor: isDark ? '#1E293B' : '#FFFFFF' }]}>
-                <MaterialIcons name="info" size={24} color="#6366F1" />
+                <MaterialIcons name="wb-shade" size={32} color="#6366F1" />
                 <Text style={[styles.infoTitle, { color: isDark ? '#F8FAFC' : '#0F172A' }]}>
-                  日陰優先ルートとは？
+                  日陰優先ルート
                 </Text>
                 <Text style={[styles.infoText, { color: isDark ? '#94A3B8' : '#64748B' }]}>
-                  建物や木々の影を最大限に活用し、紫外線への露出を最小化するルートを提案します。
-                  {'\n\n'}
-                  皮膚科学研究に基づき、UV露出を抑えることで肌へのダメージを軽減できます。
-                </Text>
-              </View>
-
-              <View style={[styles.infoCard, { backgroundColor: isDark ? '#1E293B' : '#FFFFFF' }]}>
-                <MaterialIcons name="science" size={24} color="#22C55E" />
-                <Text style={[styles.infoTitle, { color: isDark ? '#F8FAFC' : '#0F172A' }]}>
-                  データソース
-                </Text>
-                <Text style={[styles.infoText, { color: isDark ? '#94A3B8' : '#64748B' }]}>
-                  • PLATEAU 3D都市モデル（国土交通省）{'\n'}
-                  • SunCalc天文学アルゴリズム{'\n'}
-                  • WHO UV指数ガイドライン
+                  建物や木々の影を活用し、紫外線への露出を最小化するルートを提案します。
                 </Text>
               </View>
             </View>
@@ -438,10 +398,6 @@ const styles = StyleSheet.create({
   sectionTitle: {
     fontSize: 20,
     fontWeight: '600',
-    marginBottom: 4,
-  },
-  sectionSubtitle: {
-    fontSize: 13,
     marginBottom: 16,
   },
   routeCard: {
@@ -510,14 +466,9 @@ const styles = StyleSheet.create({
   routeStat: {
     flex: 1,
   },
-  routeStatHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    marginBottom: 4,
-  },
   routeStatLabel: {
-    fontSize: 11,
+    fontSize: 12,
+    marginBottom: 4,
   },
   routeStatValue: {
     fontSize: 18,
@@ -553,7 +504,8 @@ const styles = StyleSheet.create({
   },
   infoCard: {
     borderRadius: 16,
-    padding: 16,
+    padding: 24,
+    alignItems: 'center',
     ...Platform.select({
       ios: {
         shadowColor: '#000',
@@ -567,7 +519,7 @@ const styles = StyleSheet.create({
     }),
   },
   infoTitle: {
-    fontSize: 17,
+    fontSize: 18,
     fontWeight: '600',
     marginTop: 12,
     marginBottom: 8,
@@ -575,5 +527,6 @@ const styles = StyleSheet.create({
   infoText: {
     fontSize: 14,
     lineHeight: 20,
+    textAlign: 'center',
   },
 });

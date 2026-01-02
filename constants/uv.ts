@@ -137,3 +137,22 @@ export function getUVRecommendation(uvIndex: number): string {
   const level = getUVLevel(uvIndex);
   return level.recommendation;
 }
+
+/**
+ * UV指数に基づく肌へのアドバイスを取得
+ */
+export function getSkinAdvice(uvIndex: number): string {
+  if (uvIndex < 3) {
+    return '紫外線は弱いです。快適に外出できます。';
+  }
+  if (uvIndex < 6) {
+    return '日焼け止めと帽子を推奨します。';
+  }
+  if (uvIndex < 8) {
+    return '日陰を活用し、日焼け止めを必ず使用してください。';
+  }
+  if (uvIndex < 11) {
+    return '屋外活動を控え、日陰優先ルートをおすすめします。';
+  }
+  return '屋外活動を避けてください。必要な場合は完全防護で。';
+}

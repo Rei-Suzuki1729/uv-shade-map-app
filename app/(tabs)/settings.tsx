@@ -3,7 +3,7 @@
  * 肌タイプ、表示設定、通知設定など
  */
 
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import {
   View,
   Text,
@@ -12,15 +12,32 @@ import {
   Pressable,
   Switch,
   Platform,
+  ActivityIndicator,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import * as Haptics from 'expo-haptics';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import { ScreenContainer } from '@/components/screen-container';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { SKIN_TYPES } from '@/constants/uv';
-import { isIOS, BorderRadius } from '@/constants/platform-design';
+
+const SETTINGS_KEY = 'user_settings';
+
+interface UserSettings {
+  skinType: number;
+  highUVAlert: boolean;
+  shadeReminder: boolean;
+  defaultMapMode: 'standard' | 'shade';
+}
+
+const DEFAULT_SETTINGS: UserSettings = {
+  skinType: 3,
+  highUVAlert: true,
+  shadeReminder: true,
+  defaultMapMode: 'shade',
+};
 
 interface SettingItemProps {
   icon: string;
@@ -88,31 +105,59 @@ export default function SettingsScreen() {
   const colorScheme = useColorScheme();
   const isDark = colorScheme === 'dark';
   
-  // 設定状態
-  const [skinType, setSkinType] = useState(3);
+  const [settings, setSettings] = useState<UserSettings>(DEFAULT_SETTINGS);
   const [showSkinTypeModal, setShowSkinTypeModal] = useState(false);
-  const [highUVAlert, setHighUVAlert] = useState(true);
-  const [shadeReminder, setShadeReminder] = useState(true);
-  const [defaultMapMode, setDefaultMapMode] = useState<'standard' | 'shade'>('shade');
+  const [isLoading, setIsLoading] = useState(true);
 
-  // 肌タイプ選択
+  // 設定を読み込み
+  useEffect(() => {
+    loadSettings();
+  }, []);
+
+  const loadSettings = async () => {
+    try {
+      const saved = await AsyncStorage.getItem(SETTINGS_KEY);
+      if (saved) {
+        setSettings({ ...DEFAULT_SETTINGS, ...JSON.parse(saved) });
+      }
+    } catch (error) {
+      console.warn('Failed to load settings:', error);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const saveSettings = async (newSettings: UserSettings) => {
+    try {
+      await AsyncStorage.setItem(SETTINGS_KEY, JSON.stringify(newSettings));
+    } catch (error) {
+      console.warn('Failed to save settings:', error);
+    }
+  };
+
+  const updateSettings = useCallback((updates: Partial<UserSettings>) => {
+    if (Platform.OS !== 'web') {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    }
+    const newSettings = { ...settings, ...updates };
+    setSettings(newSettings);
+    saveSettings(newSettings);
+  }, [settings]);
+
   const selectSkinType = useCallback((type: number) => {
-    if (Platform.OS !== 'web') {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    }
-    setSkinType(type);
+    updateSettings({ skinType: type });
     setShowSkinTypeModal(false);
-  }, []);
+  }, [updateSettings]);
 
-  // スイッチ切り替え
-  const toggleSwitch = useCallback((setter: React.Dispatch<React.SetStateAction<boolean>>) => {
-    if (Platform.OS !== 'web') {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    }
-    setter(prev => !prev);
-  }, []);
+  const currentSkinType = SKIN_TYPES.find(t => t.id === settings.skinType);
 
-  const currentSkinType = SKIN_TYPES.find(t => t.id === skinType);
+  if (isLoading) {
+    return (
+      <ScreenContainer className="items-center justify-center">
+        <ActivityIndicator size="large" color="#6366F1" />
+      </ScreenContainer>
+    );
+  }
 
   return (
     <ScreenContainer>
@@ -157,8 +202,7 @@ export default function SettingsScreen() {
               </Pressable>
             </View>
             <Text style={[styles.modalSubtitle, { color: isDark ? '#94A3B8' : '#64748B' }]}>
-              フィッツパトリック分類に基づく肌タイプを選択してください。{'\n'}
-              UV露出時間の計算に使用されます。
+              あなたの肌タイプに合わせた紫外線対策を提案します
             </Text>
             {SKIN_TYPES.map((type) => (
               <Pressable
@@ -167,23 +211,23 @@ export default function SettingsScreen() {
                 style={({ pressed }) => [
                   styles.skinTypeOption,
                   {
-                    backgroundColor: skinType === type.id
+                    backgroundColor: settings.skinType === type.id
                       ? (isDark ? '#6366F1' : '#EEF2FF')
                       : (isDark ? '#1E293B' : '#FFFFFF'),
-                    borderColor: skinType === type.id ? '#6366F1' : (isDark ? '#334155' : '#E2E8F0'),
+                    borderColor: settings.skinType === type.id ? '#6366F1' : (isDark ? '#334155' : '#E2E8F0'),
                     opacity: pressed ? 0.8 : 1,
                   },
                 ]}
               >
                 <Text style={[
                   styles.skinTypeName,
-                  { color: skinType === type.id ? (isDark ? '#FFFFFF' : '#6366F1') : (isDark ? '#F8FAFC' : '#0F172A') },
+                  { color: settings.skinType === type.id ? (isDark ? '#FFFFFF' : '#6366F1') : (isDark ? '#F8FAFC' : '#0F172A') },
                 ]}>
                   {type.name}
                 </Text>
                 <Text style={[
                   styles.skinTypeDesc,
-                  { color: skinType === type.id ? (isDark ? '#E0E7FF' : '#6366F1') : (isDark ? '#94A3B8' : '#64748B') },
+                  { color: settings.skinType === type.id ? (isDark ? '#E0E7FF' : '#6366F1') : (isDark ? '#94A3B8' : '#64748B') },
                 ]}>
                   {type.description}
                 </Text>
@@ -201,8 +245,10 @@ export default function SettingsScreen() {
             <SettingItem
               icon="map"
               title="デフォルト表示モード"
-              value={defaultMapMode === 'shade' ? '日陰マップ' : '標準マップ'}
-              onPress={() => setDefaultMapMode(prev => prev === 'shade' ? 'standard' : 'shade')}
+              value={settings.defaultMapMode === 'shade' ? '日陰マップ' : '標準マップ'}
+              onPress={() => updateSettings({ 
+                defaultMapMode: settings.defaultMapMode === 'shade' ? 'standard' : 'shade' 
+              })}
               isDark={isDark}
             />
           </View>
@@ -220,8 +266,8 @@ export default function SettingsScreen() {
               subtitle="UV指数が高い時に通知"
               rightElement={
                 <Switch
-                  value={highUVAlert}
-                  onValueChange={() => toggleSwitch(setHighUVAlert)}
+                  value={settings.highUVAlert}
+                  onValueChange={(value) => updateSettings({ highUVAlert: value })}
                   trackColor={{ false: isDark ? '#334155' : '#E2E8F0', true: '#6366F1' }}
                   thumbColor="#FFFFFF"
                 />
@@ -235,8 +281,8 @@ export default function SettingsScreen() {
               subtitle="長時間の日光露出時に通知"
               rightElement={
                 <Switch
-                  value={shadeReminder}
-                  onValueChange={() => toggleSwitch(setShadeReminder)}
+                  value={settings.shadeReminder}
+                  onValueChange={(value) => updateSettings({ shadeReminder: value })}
                   trackColor={{ false: isDark ? '#334155' : '#E2E8F0', true: '#6366F1' }}
                   thumbColor="#FFFFFF"
                 />
@@ -246,59 +292,16 @@ export default function SettingsScreen() {
           </View>
         </View>
 
-        {/* データソース情報 */}
-        <View style={styles.section}>
-          <Text style={[styles.sectionTitle, { color: isDark ? '#94A3B8' : '#64748B' }]}>
-            データソース
-          </Text>
-          <View style={[styles.sectionContent, { backgroundColor: isDark ? '#1E293B' : '#FFFFFF' }]}>
-            <SettingItem
-              icon="apartment"
-              title="建物データ"
-              subtitle="国土交通省 PLATEAU 3D都市モデル"
-              isDark={isDark}
-            />
-            <View style={[styles.divider, { backgroundColor: isDark ? '#334155' : '#E2E8F0' }]} />
-            <SettingItem
-              icon="wb-sunny"
-              title="UV指数データ"
-              subtitle="太陽位置に基づく計算値"
-              isDark={isDark}
-            />
-            <View style={[styles.divider, { backgroundColor: isDark ? '#334155' : '#E2E8F0' }]} />
-            <SettingItem
-              icon="science"
-              title="日陰計算"
-              subtitle="SunCalc天文学アルゴリズム"
-              isDark={isDark}
-            />
-          </View>
-        </View>
-
         {/* アプリ情報 */}
         <View style={styles.section}>
           <Text style={[styles.sectionTitle, { color: isDark ? '#94A3B8' : '#64748B' }]}>
-            アプリ情報
+            情報
           </Text>
           <View style={[styles.sectionContent, { backgroundColor: isDark ? '#1E293B' : '#FFFFFF' }]}>
             <SettingItem
               icon="info"
               title="バージョン"
               value="1.0.0"
-              isDark={isDark}
-            />
-            <View style={[styles.divider, { backgroundColor: isDark ? '#334155' : '#E2E8F0' }]} />
-            <SettingItem
-              icon="description"
-              title="利用規約"
-              onPress={() => {}}
-              isDark={isDark}
-            />
-            <View style={[styles.divider, { backgroundColor: isDark ? '#334155' : '#E2E8F0' }]} />
-            <SettingItem
-              icon="privacy-tip"
-              title="プライバシーポリシー"
-              onPress={() => {}}
               isDark={isDark}
             />
           </View>

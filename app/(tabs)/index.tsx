@@ -1,7 +1,6 @@
 /**
  * ホーム画面（マップ）
  * UV指数と日陰を可視化するメイン画面
- * Web/iOS/Android対応
  */
 
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
@@ -12,10 +11,10 @@ import {
   Dimensions,
   Platform,
   ActivityIndicator,
-  ScrollView,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Haptics from 'expo-haptics';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import { ScreenContainer } from '@/components/screen-container';
 import { UVCard } from '@/components/uv-card';
@@ -34,12 +33,48 @@ import {
   type SunPosition,
 } from '@/lib/advanced-shade-calculator';
 import { Building } from '@/lib/shade-calculator';
-import { getUVColor } from '@/constants/uv';
+import { getUVColor, getUVLevel, getSkinAdvice } from '@/constants/uv';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
-// Web用のシンプルなマップビュー
-function SimpleMapView({
+// キャッシュキー
+const CACHE_KEYS = {
+  UV_DATA: 'uv_data_cache',
+  BUILDINGS: 'buildings_cache',
+};
+
+// キャッシュ有効期限（5分）
+const CACHE_TTL = 5 * 60 * 1000;
+
+// キャッシュユーティリティ
+async function getCachedData<T>(key: string): Promise<T | null> {
+  try {
+    const cached = await AsyncStorage.getItem(key);
+    if (cached) {
+      const { data, timestamp } = JSON.parse(cached);
+      if (Date.now() - timestamp < CACHE_TTL) {
+        return data as T;
+      }
+    }
+  } catch (error) {
+    console.warn('Cache read error:', error);
+  }
+  return null;
+}
+
+async function setCachedData<T>(key: string, data: T): Promise<void> {
+  try {
+    await AsyncStorage.setItem(key, JSON.stringify({
+      data,
+      timestamp: Date.now(),
+    }));
+  } catch (error) {
+    console.warn('Cache write error:', error);
+  }
+}
+
+// マップビューコンポーネント
+function MapView({
   location,
   mapMode,
   buildings,
@@ -57,7 +92,7 @@ function SimpleMapView({
   const viewBoxSize = 400;
   const centerX = viewBoxSize / 2;
   const centerY = viewBoxSize / 2;
-  const scale = 50000; // 1度あたりのピクセル数
+  const scale = 50000;
 
   const toSvgCoords = (lat: number, lng: number) => {
     if (!location) return { x: centerX, y: centerY };
@@ -66,15 +101,24 @@ function SimpleMapView({
     return { x, y };
   };
 
+  // UV指数に基づく背景グラデーション
+  const getBackgroundColor = () => {
+    if (mapMode === 'heatmap' && uvData) {
+      const uvColor = getUVColor(uvData.uv);
+      return isDark ? `${uvColor}15` : `${uvColor}10`;
+    }
+    return isDark ? '#1a1a2e' : '#f0f7ff';
+  };
+
   return (
-    <View style={[styles.webMapContainer, { backgroundColor: isDark ? '#1a1a2e' : '#e8f4f8' }]}>
+    <View style={[styles.mapContainer, { backgroundColor: getBackgroundColor() }]}>
       <svg
         width="100%"
         height="100%"
         viewBox={`0 0 ${viewBoxSize} ${viewBoxSize}`}
         style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }}
       >
-        {/* グリッド線 */}
+        {/* 背景グリッド */}
         {[...Array(21)].map((_, i) => (
           <React.Fragment key={`grid-${i}`}>
             <line
@@ -82,21 +126,39 @@ function SimpleMapView({
               y1={0}
               x2={i * 20}
               y2={viewBoxSize}
-              stroke={isDark ? '#334155' : '#cbd5e1'}
+              stroke={isDark ? '#334155' : '#e2e8f0'}
               strokeWidth={0.3}
-              opacity={0.5}
+              opacity={0.4}
             />
             <line
               x1={0}
               y1={i * 20}
               x2={viewBoxSize}
               y2={i * 20}
-              stroke={isDark ? '#334155' : '#cbd5e1'}
+              stroke={isDark ? '#334155' : '#e2e8f0'}
               strokeWidth={0.3}
-              opacity={0.5}
+              opacity={0.4}
             />
           </React.Fragment>
         ))}
+
+        {/* 道路のシミュレーション */}
+        <line
+          x1={centerX}
+          y1={0}
+          x2={centerX}
+          y2={viewBoxSize}
+          stroke={isDark ? '#475569' : '#cbd5e1'}
+          strokeWidth={8}
+        />
+        <line
+          x1={0}
+          y1={centerY}
+          x2={viewBoxSize}
+          y2={centerY}
+          stroke={isDark ? '#475569' : '#cbd5e1'}
+          strokeWidth={8}
+        />
 
         {/* 建物ポリゴン（日陰モード時） */}
         {mapMode === 'shade' && buildings.map((building) => {
@@ -111,8 +173,8 @@ function SimpleMapView({
             <polygon
               key={`building-${building.id}`}
               points={points}
-              fill={isDark ? 'rgba(100, 116, 139, 0.6)' : 'rgba(71, 85, 105, 0.5)'}
-              stroke={isDark ? '#64748B' : '#475569'}
+              fill={isDark ? 'rgba(100, 116, 139, 0.7)' : 'rgba(71, 85, 105, 0.6)'}
+              stroke={isDark ? '#94a3b8' : '#64748b'}
               strokeWidth={1}
             />
           );
@@ -131,7 +193,7 @@ function SimpleMapView({
             <polygon
               key={`shadow-${shadow.buildingId}-${index}`}
               points={points}
-              fill={`rgba(30, 58, 95, ${shadow.opacity * 0.7})`}
+              fill={isDark ? 'rgba(15, 23, 42, 0.6)' : 'rgba(30, 58, 95, 0.4)'}
               stroke="none"
             />
           );
@@ -139,55 +201,43 @@ function SimpleMapView({
 
         {/* UVヒートマップ（ヒートマップモード時） */}
         {mapMode === 'heatmap' && uvData && (
-          <rect
-            x={centerX - 100}
-            y={centerY - 100}
-            width={200}
-            height={200}
-            fill={`${getUVColor(uvData.uv)}40`}
-            stroke={getUVColor(uvData.uv)}
-            strokeWidth={2}
-            rx={10}
-          />
+          <>
+            <defs>
+              <radialGradient id="uvGradient" cx="50%" cy="50%" r="50%">
+                <stop offset="0%" stopColor={getUVColor(uvData.uv)} stopOpacity={0.6} />
+                <stop offset="100%" stopColor={getUVColor(uvData.uv)} stopOpacity={0.1} />
+              </radialGradient>
+            </defs>
+            <circle
+              cx={centerX}
+              cy={centerY}
+              r={150}
+              fill="url(#uvGradient)"
+            />
+          </>
         )}
 
         {/* 現在地マーカー */}
         <circle
           cx={centerX}
           cy={centerY}
-          r={25}
-          fill="#6366F130"
+          r={20}
+          fill="#6366F120"
         />
         <circle
           cx={centerX}
           cy={centerY}
-          r={10}
+          r={8}
           fill="#6366F1"
           stroke="#FFFFFF"
           strokeWidth={3}
         />
       </svg>
-
-      {/* 座標表示 */}
-      {location && (
-        <View style={[styles.coordOverlay, { backgroundColor: isDark ? '#1E293BDD' : '#FFFFFFDD' }]}>
-          <Text style={[styles.coordText, { color: isDark ? '#F8FAFC' : '#0F172A' }]}>
-            📍 {location.latitude.toFixed(4)}°N, {location.longitude.toFixed(4)}°E
-          </Text>
-        </View>
-      )}
-
-      {/* Web版の説明 */}
-      <View style={[styles.webNotice, { backgroundColor: isDark ? '#6366F120' : '#6366F110' }]}>
-        <Text style={[styles.webNoticeText, { color: '#6366F1' }]}>
-          📱 Expo Goアプリで実機テストすると、フル機能の地図が表示されます
-        </Text>
-      </View>
     </View>
   );
 }
 
-// ネイティブ用のマップビュー
+// ネイティブマップビュー
 function NativeMapView({
   location,
   mapMode,
@@ -205,8 +255,7 @@ function NativeMapView({
   isDark: boolean;
   onRegionChange: () => void;
 }) {
-  // 動的インポート
-  const MapView = require('react-native-maps').default;
+  const MapViewComponent = require('react-native-maps').default;
   const { Polygon, PROVIDER_GOOGLE } = require('react-native-maps');
 
   const darkMapStyle = [
@@ -225,7 +274,7 @@ function NativeMapView({
   };
 
   return (
-    <MapView
+    <MapViewComponent
       style={styles.nativeMap}
       provider={Platform.OS === 'android' ? PROVIDER_GOOGLE : undefined}
       initialRegion={initialRegion}
@@ -235,7 +284,6 @@ function NativeMapView({
       onRegionChangeComplete={onRegionChange}
       customMapStyle={isDark ? darkMapStyle : undefined}
     >
-      {/* 建物ポリゴン */}
       {mapMode === 'shade' && buildings.map((building) => (
         <Polygon
           key={`building-${building.id}`}
@@ -246,7 +294,6 @@ function NativeMapView({
         />
       ))}
 
-      {/* 影ポリゴン */}
       {mapMode === 'shade' && shadows.map((shadow, index) => (
         <Polygon
           key={`shadow-${shadow.buildingId}-${index}`}
@@ -257,7 +304,6 @@ function NativeMapView({
         />
       ))}
 
-      {/* UVヒートマップ */}
       {mapMode === 'heatmap' && uvData && location && (
         <Polygon
           coordinates={[
@@ -271,7 +317,7 @@ function NativeMapView({
           strokeWidth={2}
         />
       )}
-    </MapView>
+    </MapViewComponent>
   );
 }
 
@@ -280,8 +326,7 @@ export default function MapScreen() {
   const colorScheme = useColorScheme();
   const isDark = colorScheme === 'dark';
 
-  // 状態管理
-  const { location, loading: locationLoading, refresh: refreshLocation } = useLocation();
+  const { location, loading: locationLoading, error: locationError, refresh: refreshLocation } = useLocation();
   const [mapMode, setMapMode] = useState<MapMode>('standard');
   const [uvData, setUVData] = useState<UVData | null>(null);
   const [buildings, setBuildings] = useState<Building[]>([]);
@@ -289,6 +334,7 @@ export default function MapScreen() {
   const [sunPosition, setSunPosition] = useState<SunPosition | null>(null);
   const [isLoadingData, setIsLoadingData] = useState(false);
   const [isTracking, setIsTracking] = useState(true);
+  const [dataError, setDataError] = useState<string | null>(null);
 
   // 現在地が変更されたらデータを取得
   useEffect(() => {
@@ -297,23 +343,32 @@ export default function MapScreen() {
     }
   }, [location]);
 
-  // データ読み込み
+  // データ読み込み（キャッシュ対応）
   const loadData = useCallback(async () => {
     if (!location) return;
 
     setIsLoadingData(true);
+    setDataError(null);
 
     try {
-      // UV指数データを取得
-      const uv = await getUVData(location.latitude, location.longitude);
+      // キャッシュからUVデータを取得
+      let uv = await getCachedData<UVData>(CACHE_KEYS.UV_DATA);
+      if (!uv) {
+        uv = await getUVData(location.latitude, location.longitude);
+        await setCachedData(CACHE_KEYS.UV_DATA, uv);
+      }
       setUVData(uv);
 
-      // 建物データを取得
-      const buildingData = await fetchBuildingsNearby(
-        location.latitude,
-        location.longitude,
-        0.3
-      );
+      // キャッシュから建物データを取得
+      let buildingData = await getCachedData<Building[]>(CACHE_KEYS.BUILDINGS);
+      if (!buildingData) {
+        buildingData = await fetchBuildingsNearby(
+          location.latitude,
+          location.longitude,
+          0.3
+        );
+        await setCachedData(CACHE_KEYS.BUILDINGS, buildingData);
+      }
       setBuildings(buildingData);
 
       // 太陽位置と影を計算
@@ -324,9 +379,12 @@ export default function MapScreen() {
       if (isSunAboveHorizon(newSunPosition)) {
         const newShadows = calculateAllShadows(buildingData, newSunPosition, location.latitude);
         setShadows(newShadows);
+      } else {
+        setShadows([]);
       }
     } catch (error) {
       console.error('Failed to load data:', error);
+      setDataError('データの取得に失敗しました');
     } finally {
       setIsLoadingData(false);
     }
@@ -346,6 +404,15 @@ export default function MapScreen() {
     setIsTracking(false);
   }, []);
 
+  // UV情報のメモ化
+  const uvInfo = useMemo(() => {
+    if (!uvData) return null;
+    return {
+      level: getUVLevel(uvData.uv),
+      advice: getSkinAdvice(uvData.uv),
+    };
+  }, [uvData]);
+
   // ローディング表示
   if (locationLoading) {
     return (
@@ -358,11 +425,25 @@ export default function MapScreen() {
     );
   }
 
+  // エラー表示
+  if (locationError) {
+    return (
+      <ScreenContainer className="items-center justify-center p-6">
+        <Text style={[styles.errorTitle, { color: isDark ? '#F8FAFC' : '#0F172A' }]}>
+          位置情報を取得できません
+        </Text>
+        <Text style={[styles.errorText, { color: isDark ? '#94A3B8' : '#64748B' }]}>
+          設定から位置情報の許可を確認してください
+        </Text>
+      </ScreenContainer>
+    );
+  }
+
   return (
     <View style={styles.container}>
       {/* 地図 */}
       {Platform.OS === 'web' ? (
-        <SimpleMapView
+        <MapView
           location={location}
           mapMode={mapMode}
           buildings={buildings}
@@ -384,7 +465,6 @@ export default function MapScreen() {
 
       {/* 上部UI */}
       <View style={[styles.topContainer, { paddingTop: insets.top + 8 }]}>
-        {/* 検索バー */}
         <View style={styles.searchContainer}>
           <SearchBar
             placeholder="場所を検索"
@@ -392,14 +472,12 @@ export default function MapScreen() {
           />
         </View>
 
-        {/* UV指数カード */}
         {uvData && (
           <View style={styles.uvCardContainer}>
             <UVCard uvIndex={uvData.uv} compact />
           </View>
         )}
 
-        {/* 表示モード切替 */}
         <View style={styles.modeSelectorContainer}>
           <MapModeSelector currentMode={mapMode} onModeChange={setMapMode} />
         </View>
@@ -421,45 +499,38 @@ export default function MapScreen() {
           backgroundColor: isDark ? '#1E293B' : '#FFFFFF',
         }
       ]}>
-        {/* 太陽情報 */}
-        {sunPosition && (
-          <View style={styles.sunInfo}>
-            <Text style={[styles.sunInfoLabel, { color: isDark ? '#94A3B8' : '#64748B' }]}>
-              太陽高度
-            </Text>
-            <Text style={[styles.sunInfoValue, { color: isDark ? '#F8FAFC' : '#0F172A' }]}>
-              {sunPosition.altitudeDegrees.toFixed(1)}°
-            </Text>
-            <Text style={[styles.sunInfoLabel, { color: isDark ? '#94A3B8' : '#64748B', marginLeft: 16 }]}>
-              方位
-            </Text>
-            <Text style={[styles.sunInfoValue, { color: isDark ? '#F8FAFC' : '#0F172A' }]}>
-              {sunPosition.azimuthDegrees.toFixed(1)}°
+        {/* UV情報 */}
+        {uvInfo && (
+          <View style={styles.uvInfoSection}>
+            <Text style={[styles.uvAdvice, { color: isDark ? '#F8FAFC' : '#0F172A' }]}>
+              {uvInfo.advice}
             </Text>
           </View>
         )}
 
-        {/* 日陰情報 */}
-        {mapMode === 'shade' && (
+        {/* 日陰モード時の情報 */}
+        {mapMode === 'shade' && sunPosition && (
           <View style={styles.shadeInfo}>
-            <Text style={[styles.shadeInfoText, { color: isDark ? '#F8FAFC' : '#0F172A' }]}>
-              {shadows.length > 0
-                ? `${buildings.length}棟の建物から${shadows.length}個の影を表示中`
-                : sunPosition && !isSunAboveHorizon(sunPosition)
-                  ? '現在は夜間です'
-                  : '建物データを読み込み中...'}
+            <Text style={[styles.shadeInfoText, { color: isDark ? '#94A3B8' : '#64748B' }]}>
+              {isSunAboveHorizon(sunPosition)
+                ? `${shadows.length}箇所の日陰エリアを表示中`
+                : '現在は夜間のため日陰表示はありません'}
             </Text>
           </View>
         )}
 
-        {/* ローディング表示 */}
+        {/* ローディング */}
         {isLoadingData && (
           <View style={styles.loadingOverlay}>
             <ActivityIndicator size="small" color="#6366F1" />
-            <Text style={[styles.loadingSmallText, { color: isDark ? '#94A3B8' : '#64748B' }]}>
-              データ読み込み中...
-            </Text>
           </View>
+        )}
+
+        {/* エラー */}
+        {dataError && (
+          <Text style={[styles.dataErrorText, { color: '#EF4444' }]}>
+            {dataError}
+          </Text>
         )}
       </View>
     </View>
@@ -470,7 +541,7 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
   },
-  webMapContainer: {
+  mapContainer: {
     flex: 1,
     position: 'relative',
   },
@@ -525,23 +596,18 @@ const styles = StyleSheet.create({
       },
     }),
   },
-  sunInfo: {
-    flexDirection: 'row',
+  uvInfoSection: {
     alignItems: 'center',
-    justifyContent: 'center',
     paddingVertical: 8,
   },
-  sunInfoLabel: {
-    fontSize: 13,
-    marginRight: 4,
-  },
-  sunInfoValue: {
+  uvAdvice: {
     fontSize: 15,
-    fontWeight: '600',
+    fontWeight: '500',
+    textAlign: 'center',
   },
   shadeInfo: {
     alignItems: 'center',
-    paddingVertical: 8,
+    paddingVertical: 4,
   },
   shadeInfoText: {
     fontSize: 13,
@@ -551,37 +617,22 @@ const styles = StyleSheet.create({
     fontSize: 16,
   },
   loadingOverlay: {
-    flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
     paddingVertical: 8,
-    gap: 8,
   },
-  loadingSmallText: {
-    fontSize: 13,
+  errorTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    marginBottom: 8,
+    textAlign: 'center',
   },
-  coordOverlay: {
-    position: 'absolute',
-    top: 10,
-    right: 10,
-    padding: 8,
-    borderRadius: 8,
+  errorText: {
+    fontSize: 14,
+    textAlign: 'center',
   },
-  coordText: {
-    fontSize: 12,
-    fontWeight: '500',
-  },
-  webNotice: {
-    position: 'absolute',
-    bottom: 150,
-    left: 20,
-    right: 20,
-    padding: 12,
-    borderRadius: 10,
-  },
-  webNoticeText: {
+  dataErrorText: {
     fontSize: 13,
     textAlign: 'center',
-    fontWeight: '500',
+    paddingVertical: 4,
   },
 });
