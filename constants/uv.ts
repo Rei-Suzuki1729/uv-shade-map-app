@@ -5,6 +5,11 @@
 
 export type UVLevel = 'low' | 'moderate' | 'high' | 'veryHigh' | 'extreme';
 
+/**
+ * 肌タイプ（フィッツパトリック分類）
+ */
+export type SkinType = 'I' | 'II' | 'III' | 'IV' | 'V' | 'VI';
+
 export interface UVInfo {
   level: UVLevel;
   label: string;

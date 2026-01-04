@@ -22,6 +22,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { ScreenContainer } from '@/components/screen-container';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { SKIN_TYPES } from '@/constants/uv';
+import { offlineManager, prefetchAreaData } from '@/lib/offline-cache';
 
 const SETTINGS_KEY = 'user_settings';
 
@@ -30,6 +31,7 @@ interface UserSettings {
   highUVAlert: boolean;
   shadeReminder: boolean;
   defaultMapMode: 'standard' | 'shade';
+  offlineMode: boolean;
 }
 
 const DEFAULT_SETTINGS: UserSettings = {
@@ -37,6 +39,7 @@ const DEFAULT_SETTINGS: UserSettings = {
   highUVAlert: true,
   shadeReminder: true,
   defaultMapMode: 'shade',
+  offlineMode: false,
 };
 
 interface SettingItemProps {
@@ -108,11 +111,43 @@ export default function SettingsScreen() {
   const [settings, setSettings] = useState<UserSettings>(DEFAULT_SETTINGS);
   const [showSkinTypeModal, setShowSkinTypeModal] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
+  const [cacheStats, setCacheStats] = useState<{
+    uvDataCount: number;
+    buildingDataCount: number;
+    favoritesCount: number;
+    totalSize: string;
+  } | null>(null);
+  const [isDownloading, setIsDownloading] = useState(false);
 
   // 設定を読み込み
   useEffect(() => {
     loadSettings();
+    loadCacheStats();
   }, []);
+
+  const loadCacheStats = async () => {
+    const stats = await offlineManager.getCacheStats();
+    setCacheStats(stats);
+  };
+
+  const handleClearCache = async () => {
+    if (Platform.OS !== 'web') {
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+    }
+    await offlineManager.clearAllCache();
+    await loadCacheStats();
+  };
+
+  const handleDownloadAreaData = async () => {
+    setIsDownloading(true);
+    // 東京駅周辺のデータをダウンロード（デモ）
+    await prefetchAreaData(35.6812, 139.7671, 2);
+    if (Platform.OS !== 'web') {
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    }
+    await loadCacheStats();
+    setIsDownloading(false);
+  };
 
   const loadSettings = async () => {
     try {
@@ -292,6 +327,42 @@ export default function SettingsScreen() {
           </View>
         </View>
 
+        {/* オフラインデータ */}
+        <View style={styles.section}>
+          <Text style={[styles.sectionTitle, { color: isDark ? '#94A3B8' : '#64748B' }]}>
+            オフラインデータ
+          </Text>
+          <View style={[styles.sectionContent, { backgroundColor: isDark ? '#1E293B' : '#FFFFFF' }]}>
+            <SettingItem
+              icon="cloud-download"
+              title="エリアデータをダウンロード"
+              subtitle="現在地周辺のデータを保存"
+              onPress={handleDownloadAreaData}
+              rightElement={
+                isDownloading ? (
+                  <ActivityIndicator size="small" color="#6366F1" />
+                ) : undefined
+              }
+              isDark={isDark}
+            />
+            <View style={[styles.divider, { backgroundColor: isDark ? '#334155' : '#E2E8F0' }]} />
+            <SettingItem
+              icon="storage"
+              title="キャッシュサイズ"
+              value={cacheStats?.totalSize || '0 B'}
+              isDark={isDark}
+            />
+            <View style={[styles.divider, { backgroundColor: isDark ? '#334155' : '#E2E8F0' }]} />
+            <SettingItem
+              icon="delete"
+              title="キャッシュをクリア"
+              subtitle="ダウンロードしたデータを削除"
+              onPress={handleClearCache}
+              isDark={isDark}
+            />
+          </View>
+        </View>
+
         {/* アプリ情報 */}
         <View style={styles.section}>
           <Text style={[styles.sectionTitle, { color: isDark ? '#94A3B8' : '#64748B' }]}>
@@ -301,7 +372,14 @@ export default function SettingsScreen() {
             <SettingItem
               icon="info"
               title="バージョン"
-              value="1.0.0"
+              value="1.3.0"
+              isDark={isDark}
+            />
+            <View style={[styles.divider, { backgroundColor: isDark ? '#334155' : '#E2E8F0' }]} />
+            <SettingItem
+              icon="science"
+              title="科学的根拠"
+              subtitle="CoolWalks論文・WHO UVガイドライン"
               isDark={isDark}
             />
           </View>

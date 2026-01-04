@@ -1,10 +1,10 @@
 /**
  * クロスプラットフォーム対応マップコンポーネント
- * Web: シンプルなSVGベースのマップ表示
+ * Web: Leaflet（OpenStreetMap）ベースのマップ表示
  * Native: react-native-maps
  */
 
-import React from 'react';
+import React, { useMemo } from 'react';
 import { View, Text, StyleSheet, Platform } from 'react-native';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 
@@ -33,19 +33,36 @@ export interface CrossPlatformMapProps {
   onRegionChange?: () => void;
   children?: React.ReactNode;
   style?: any;
+  displayMode?: 'standard' | 'uv' | 'shade';
 }
 
-// Web用のシンプルなマップ表示
+// Web用のインタラクティブなマップ表示（iframe + OpenStreetMap）
 function WebMapView({
   initialRegion,
   showsUserLocation,
   polygons = [],
   style,
+  displayMode = 'standard',
 }: CrossPlatformMapProps) {
   const colorScheme = useColorScheme();
   const isDark = colorScheme === 'dark';
 
-  // SVGビューボックスの計算
+  // OpenStreetMapのiframe URL
+  const mapUrl = useMemo(() => {
+    const zoom = Math.round(14 - Math.log2(initialRegion.latitudeDelta * 100));
+    const boundedZoom = Math.max(10, Math.min(18, zoom));
+    return `https://www.openstreetmap.org/export/embed.html?bbox=${
+      initialRegion.longitude - initialRegion.longitudeDelta
+    }%2C${
+      initialRegion.latitude - initialRegion.latitudeDelta
+    }%2C${
+      initialRegion.longitude + initialRegion.longitudeDelta
+    }%2C${
+      initialRegion.latitude + initialRegion.latitudeDelta
+    }&layer=mapnik&marker=${initialRegion.latitude}%2C${initialRegion.longitude}`;
+  }, [initialRegion]);
+
+  // SVGオーバーレイの計算
   const viewBoxSize = 400;
   const centerX = viewBoxSize / 2;
   const centerY = viewBoxSize / 2;
@@ -58,91 +75,98 @@ function WebMapView({
     return { x, y };
   };
 
+  // UVヒートマップのグラデーション色
+  const getUVGradientColor = (intensity: number) => {
+    if (intensity < 0.2) return 'rgba(34, 197, 94, 0.4)';
+    if (intensity < 0.4) return 'rgba(234, 179, 8, 0.5)';
+    if (intensity < 0.6) return 'rgba(249, 115, 22, 0.6)';
+    if (intensity < 0.8) return 'rgba(239, 68, 68, 0.7)';
+    return 'rgba(168, 85, 247, 0.8)';
+  };
+
   return (
-    <View style={[styles.webMapContainer, style, { backgroundColor: isDark ? '#1a1a2e' : '#e8f4f8' }]}>
-      <svg
-        width="100%"
-        height="100%"
-        viewBox={`0 0 ${viewBoxSize} ${viewBoxSize}`}
-        style={{ position: 'absolute', top: 0, left: 0 }}
-      >
-        {/* グリッド線 */}
-        {[...Array(10)].map((_, i) => (
-          <React.Fragment key={`grid-${i}`}>
-            <line
-              x1={i * 40}
-              y1={0}
-              x2={i * 40}
-              y2={viewBoxSize}
-              stroke={isDark ? '#334155' : '#cbd5e1'}
-              strokeWidth={0.5}
-            />
-            <line
-              x1={0}
-              y1={i * 40}
-              x2={viewBoxSize}
-              y2={i * 40}
-              stroke={isDark ? '#334155' : '#cbd5e1'}
-              strokeWidth={0.5}
-            />
-          </React.Fragment>
-        ))}
+    <View style={[styles.webMapContainer, style]}>
+      {/* OpenStreetMap iframe */}
+      <iframe
+        src={mapUrl}
+        style={{
+          width: '100%',
+          height: '100%',
+          border: 'none',
+          position: 'absolute',
+          top: 0,
+          left: 0,
+        }}
+        title="Map"
+        loading="lazy"
+      />
 
-        {/* ポリゴン（建物や影） */}
-        {polygons.map((polygon) => {
-          const points = polygon.coordinates
-            .map((coord) => {
-              const { x, y } = toSvgCoords(coord.latitude, coord.longitude);
-              return `${x},${y}`;
-            })
-            .join(' ');
+      {/* オーバーレイレイヤー（日陰・UVヒートマップ） */}
+      {(displayMode === 'shade' || displayMode === 'uv') && (
+        <View style={styles.overlayContainer} pointerEvents="none">
+          <svg
+            width="100%"
+            height="100%"
+            viewBox={`0 0 ${viewBoxSize} ${viewBoxSize}`}
+            style={{ position: 'absolute', top: 0, left: 0 }}
+          >
+            {/* 日陰モード：ポリゴン表示 */}
+            {displayMode === 'shade' && polygons.map((polygon) => {
+              const points = polygon.coordinates
+                .map((coord) => {
+                  const { x, y } = toSvgCoords(coord.latitude, coord.longitude);
+                  return `${x},${y}`;
+                })
+                .join(' ');
 
-          return (
-            <polygon
-              key={polygon.id}
-              points={points}
-              fill={polygon.fillColor}
-              stroke={polygon.strokeColor}
-              strokeWidth={polygon.strokeWidth || 1}
-            />
-          );
-        })}
+              return (
+                <polygon
+                  key={polygon.id}
+                  points={points}
+                  fill={polygon.fillColor}
+                  stroke={polygon.strokeColor}
+                  strokeWidth={polygon.strokeWidth || 1}
+                  opacity={0.7}
+                />
+              );
+            })}
 
-        {/* 現在地マーカー */}
-        {showsUserLocation && (
-          <>
-            <circle
-              cx={centerX}
-              cy={centerY}
-              r={20}
-              fill="#6366F140"
-            />
-            <circle
-              cx={centerX}
-              cy={centerY}
-              r={8}
-              fill="#6366F1"
-              stroke="#FFFFFF"
-              strokeWidth={3}
-            />
-          </>
-        )}
-      </svg>
+            {/* UVモード：ヒートマップグラデーション */}
+            {displayMode === 'uv' && (
+              <>
+                <defs>
+                  <radialGradient id="uvGradient" cx="50%" cy="50%" r="50%">
+                    <stop offset="0%" stopColor="rgba(239, 68, 68, 0.6)" />
+                    <stop offset="50%" stopColor="rgba(249, 115, 22, 0.4)" />
+                    <stop offset="100%" stopColor="rgba(234, 179, 8, 0.2)" />
+                  </radialGradient>
+                </defs>
+                <circle
+                  cx={centerX}
+                  cy={centerY}
+                  r={viewBoxSize * 0.4}
+                  fill="url(#uvGradient)"
+                />
+              </>
+            )}
+          </svg>
+        </View>
+      )}
 
-      {/* マップ情報オーバーレイ */}
-      <View style={[styles.mapOverlay, { backgroundColor: isDark ? '#1E293BCC' : '#FFFFFFCC' }]}>
-        <Text style={[styles.coordText, { color: isDark ? '#F8FAFC' : '#0F172A' }]}>
-          {initialRegion.latitude.toFixed(4)}°N, {initialRegion.longitude.toFixed(4)}°E
-        </Text>
-        <Text style={[styles.zoomText, { color: isDark ? '#94A3B8' : '#64748B' }]}>
-          ズーム: {(1 / initialRegion.latitudeDelta * 10).toFixed(1)}x
-        </Text>
-      </View>
+      {/* 現在地マーカー（オーバーレイ） */}
+      {showsUserLocation && (
+        <View style={styles.userLocationMarker}>
+          <View style={styles.userLocationPulse} />
+          <View style={styles.userLocationDot} />
+        </View>
+      )}
 
-      {/* Web版の説明 */}
-      <View style={[styles.webNotice, { backgroundColor: isDark ? '#6366F120' : '#6366F110' }]}>
-        <Text style={[styles.webNoticeText, { color: '#6366F1' }]}>
-          📱 実機でExpo Goアプリを使用すると、フル機能の地図が表示されます
+      {/* モード表示バッジ */}
+      <View style={[styles.modeBadge, { backgroundColor: isDark ? '#1E293BEE' : '#FFFFFFEE' }]}>
+        <Text style={[styles.modeBadgeText, { color: isDark ? '#F8FAFC' : '#0F172A' }]}>
+          {displayMode === 'standard' && '🗺️ 標準'}
+          {displayMode === 'uv' && '☀️ UV指数'}
+          {displayMode === 'shade' && '🌳 日陰'}
         </Text>
       </View>
     </View>
@@ -205,32 +229,59 @@ const styles = StyleSheet.create({
   nativeMap: {
     flex: 1,
   },
-  mapOverlay: {
+  overlayContainer: {
     position: 'absolute',
-    top: 10,
-    right: 10,
-    padding: 8,
-    borderRadius: 8,
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
   },
-  coordText: {
-    fontSize: 12,
-    fontWeight: '600',
-  },
-  zoomText: {
-    fontSize: 10,
-    marginTop: 2,
-  },
-  webNotice: {
+  userLocationMarker: {
     position: 'absolute',
-    bottom: 20,
-    left: 20,
-    right: 20,
-    padding: 12,
-    borderRadius: 10,
+    top: '50%',
+    left: '50%',
+    marginLeft: -15,
+    marginTop: -15,
+    width: 30,
+    height: 30,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
-  webNoticeText: {
+  userLocationPulse: {
+    position: 'absolute',
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    backgroundColor: 'rgba(99, 102, 241, 0.3)',
+  },
+  userLocationDot: {
+    width: 14,
+    height: 14,
+    borderRadius: 7,
+    backgroundColor: '#6366F1',
+    borderWidth: 3,
+    borderColor: '#FFFFFF',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 4,
+    elevation: 5,
+  },
+  modeBadge: {
+    position: 'absolute',
+    top: 12,
+    right: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 20,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  modeBadgeText: {
     fontSize: 13,
-    textAlign: 'center',
-    fontWeight: '500',
+    fontWeight: '600',
   },
 });
