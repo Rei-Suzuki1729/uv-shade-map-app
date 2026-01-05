@@ -413,27 +413,13 @@ export default function MapScreen() {
     };
   }, [uvData]);
 
-  // ローディング表示
-  if (locationLoading) {
+  // 位置情報がない場合はローディング表示
+  if (!location) {
     return (
       <ScreenContainer className="items-center justify-center">
         <ActivityIndicator size="large" color="#6366F1" />
         <Text style={[styles.loadingText, { color: isDark ? '#F8FAFC' : '#0F172A' }]}>
-          位置情報を取得中...
-        </Text>
-      </ScreenContainer>
-    );
-  }
-
-  // エラー表示
-  if (locationError) {
-    return (
-      <ScreenContainer className="items-center justify-center p-6">
-        <Text style={[styles.errorTitle, { color: isDark ? '#F8FAFC' : '#0F172A' }]}>
-          位置情報を取得できません
-        </Text>
-        <Text style={[styles.errorText, { color: isDark ? '#94A3B8' : '#64748B' }]}>
-          設定から位置情報の許可を確認してください
+          読み込み中...
         </Text>
       </ScreenContainer>
     );

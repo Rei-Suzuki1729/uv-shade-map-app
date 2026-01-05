@@ -67,55 +67,70 @@ export function useLocation(): UseLocationResult {
               },
               (err) => {
                 console.warn('Geolocation error:', err.message);
-                // エラー時はデフォルト位置を使用
+                // エラー時はデフォルト位置（東京駅）を使用
                 setLocation(DEFAULT_LOCATION);
-                setError('位置情報を取得できませんでした。デフォルト位置を使用しています。');
+                setError(null); // エラーメッセージを表示しない
                 setLoading(false);
                 resolve();
               },
               {
-                enableHighAccuracy: true,
-                timeout: 10000,
+                enableHighAccuracy: false, // 精度を低くして速度優先
+                timeout: 5000, // タイムアウトを5秒に短縮
                 maximumAge: 60000,
               }
             );
           });
         } else {
+          // Geolocation APIがない場合もデフォルト位置を使用
           setLocation(DEFAULT_LOCATION);
-          setError('このブラウザは位置情報をサポートしていません。');
+          setError(null);
           setLoading(false);
           return;
         }
       }
 
-      // ネイティブ環境
+      // ネイティブ環境：まずデフォルト位置を設定
+      setLocation(DEFAULT_LOCATION);
+      setLoading(false);
+
+      // 許可状態を確認
       const { status } = await Location.getForegroundPermissionsAsync();
       
-      if (status !== 'granted') {
+      if (status === 'granted') {
+        // 許可済みの場合はすぐに位置情報を取得
+        const currentLocation = await Location.getCurrentPositionAsync({
+          accuracy: Location.Accuracy.Balanced,
+        });
+
+        setLocation({
+          latitude: currentLocation.coords.latitude,
+          longitude: currentLocation.coords.longitude,
+          accuracy: currentLocation.coords.accuracy,
+          timestamp: currentLocation.timestamp,
+        });
+      } else if (status === 'undetermined') {
+        // 未設定の場合は許可をリクエスト
         const granted = await requestPermission();
-        if (!granted) {
-          setLocation(DEFAULT_LOCATION);
-          setError('位置情報の許可が必要です。デフォルト位置を使用しています。');
-          setLoading(false);
-          return;
+        if (granted) {
+          const currentLocation = await Location.getCurrentPositionAsync({
+            accuracy: Location.Accuracy.Balanced,
+          });
+
+          setLocation({
+            latitude: currentLocation.coords.latitude,
+            longitude: currentLocation.coords.longitude,
+            accuracy: currentLocation.coords.accuracy,
+            timestamp: currentLocation.timestamp,
+          });
         }
+        // 許可されなかった場合はデフォルト位置のまま
       }
-
-      const currentLocation = await Location.getCurrentPositionAsync({
-        accuracy: Location.Accuracy.Balanced,
-      });
-
-      setLocation({
-        latitude: currentLocation.coords.latitude,
-        longitude: currentLocation.coords.longitude,
-        accuracy: currentLocation.coords.accuracy,
-        timestamp: currentLocation.timestamp,
-      });
+      // deniedの場合はデフォルト位置のまま
     } catch (e) {
       console.error('Location error:', e);
+      // エラー時もデフォルト位置を使用
       setLocation(DEFAULT_LOCATION);
-      setError('位置情報の取得に失敗しました。デフォルト位置を使用しています。');
-    } finally {
+      setError(null);
       setLoading(false);
     }
   }, [requestPermission]);
