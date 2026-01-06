@@ -23,7 +23,9 @@ import { SearchBar } from '@/components/search-bar';
 import { LocationButton } from '@/components/location-button';
 import { useLocation } from '@/hooks/use-location';
 import { useColorScheme } from '@/hooks/use-color-scheme';
-import { getUVData, type UVData } from '@/lib/uv-service';
+import { type UVData, getUVData } from '@/lib/uv-service';
+import { getApiBaseUrl } from '@/constants/oauth';
+import { trpc } from '@/lib/trpc';
 import { fetchBuildingsNearby } from '@/lib/plateau-service';
 import {
   getSunPosition,
@@ -352,9 +354,58 @@ export default function MapScreen() {
 
     try {
       // キャッシュからUVデータを取得
-      let uv = await getCachedData<UVData>(CACHE_KEYS.UV_DATA);
+      let uv: UVData | null = null;
+      const cachedData = await getCachedData<any>(CACHE_KEYS.UV_DATA);
+      
+      // キャッシュデータがあれば、それが正しいUVData形式か確認
+      if (cachedData && cachedData.uv !== undefined) {
+        uv = cachedData;
+      }
+      
       if (!uv) {
-        uv = await getUVData(location.latitude, location.longitude);
+        // バックエンドAPIから取得を試みる
+        try {
+          // tRPCのバッチクエリ形式でリクエスト (superjson対応)
+          const inputData = {
+            "0": {
+              json: {
+                latitude: location.latitude,
+                longitude: location.longitude,
+              }
+            }
+          };
+          const apiUrl = `${getApiBaseUrl()}/api/trpc/uv.getData?batch=1&input=${encodeURIComponent(JSON.stringify(inputData))}`;
+          const response = await fetch(apiUrl, {
+            credentials: 'include',
+          });
+          
+          if (response.ok) {
+            const result = await response.json();
+            // バッチレスポンスの形式: [{result: {data: {json: {source, data}}}}]
+            if (result[0]?.result?.data?.json) {
+              const apiData = result[0].result.data.json;
+              // APIレスポンスをUVData型に変換
+              const baseUvData = await getUVData(location.latitude, location.longitude);
+              // APIからの実際の値で上書き
+              uv = {
+                ...baseUvData,
+                uv: apiData.data.uvIndex,
+                uvMax: apiData.data.uvMax || apiData.data.uvIndex,
+                uvMaxTime: apiData.data.uvMaxTime || '12:00',
+              };
+            } else {
+              throw new Error('Invalid API response format');
+            }
+          } else {
+            const errorData = await response.json();
+            console.error('API error:', errorData);
+            throw new Error('API request failed');
+          }
+        } catch (apiError) {
+          console.warn('Failed to fetch from API, using simulation:', apiError);
+          // フォールバック: シミュレーションデータを使用
+          uv = await getUVData(location.latitude, location.longitude);
+        }
         await setCachedData(CACHE_KEYS.UV_DATA, uv);
       }
       setUVData(uv);
