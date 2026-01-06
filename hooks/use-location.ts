@@ -51,42 +51,33 @@ export function useLocation(): UseLocationResult {
     try {
       // Web環境の場合は特別な処理
       if (Platform.OS === 'web') {
-        // ブラウザのGeolocation APIを使用
+        // まずデフォルト位置を設定して表示を開始
+        setLocation(DEFAULT_LOCATION);
+        setLoading(false);
+
+        // バックグラウンドで位置情報を取得しようとする
         if (navigator.geolocation) {
-          return new Promise<void>((resolve) => {
-            navigator.geolocation.getCurrentPosition(
-              (position) => {
-                setLocation({
-                  latitude: position.coords.latitude,
-                  longitude: position.coords.longitude,
-                  accuracy: position.coords.accuracy,
-                  timestamp: position.timestamp,
-                });
-                setLoading(false);
-                resolve();
-              },
-              (err) => {
-                console.warn('Geolocation error:', err.message);
-                // エラー時はデフォルト位置（東京駅）を使用
-                setLocation(DEFAULT_LOCATION);
-                setError(null); // エラーメッセージを表示しない
-                setLoading(false);
-                resolve();
-              },
-              {
-                enableHighAccuracy: false, // 精度を低くして速度優先
-                timeout: 5000, // タイムアウトを5秒に短縮
-                maximumAge: 60000,
-              }
-            );
-          });
-        } else {
-          // Geolocation APIがない場合もデフォルト位置を使用
-          setLocation(DEFAULT_LOCATION);
-          setError(null);
-          setLoading(false);
-          return;
+          navigator.geolocation.getCurrentPosition(
+            (position) => {
+              setLocation({
+                latitude: position.coords.latitude,
+                longitude: position.coords.longitude,
+                accuracy: position.coords.accuracy,
+                timestamp: position.timestamp,
+              });
+            },
+            (err) => {
+              console.warn('Geolocation error:', err.message);
+              // エラー時はデフォルト位置のまま
+            },
+            {
+              enableHighAccuracy: false,
+              timeout: 5000,
+              maximumAge: 60000,
+            }
+          );
         }
+        return;
       }
 
       // ネイティブ環境：まずデフォルト位置を設定
@@ -137,7 +128,8 @@ export function useLocation(): UseLocationResult {
 
   useEffect(() => {
     getCurrentLocation();
-  }, [getCurrentLocation]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // 初回のみ実行
 
   return {
     location,
