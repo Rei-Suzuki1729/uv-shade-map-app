@@ -21,7 +21,9 @@ import { UVCard } from '@/components/uv-card';
 import { MapModeSelector, type MapMode } from '@/components/map-mode-selector';
 import { SearchBar } from '@/components/search-bar';
 import { LocationButton } from '@/components/location-button';
+import { LocationInfoCard } from '@/components/location-info-card';
 import { useLocation } from '@/hooks/use-location';
+import { reverseGeocode } from '@/lib/geocoding-service';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { type UVData, getUVData } from '@/lib/uv-service';
 import { getApiBaseUrl } from '@/constants/oauth';
@@ -337,11 +339,42 @@ export default function MapScreen() {
   const [isLoadingData, setIsLoadingData] = useState(false);
   const [isTracking, setIsTracking] = useState(true);
   const [dataError, setDataError] = useState<string | null>(null);
+  const [placeName, setPlaceName] = useState<string | null>(null);
+  const [loadingPlaceName, setLoadingPlaceName] = useState(false);
 
   // 現在地が変更されたらデータを取得
   useEffect(() => {
     if (location) {
       loadData();
+      loadPlaceName();
+    }
+  }, [location]);
+
+  // 地名を取得
+  const loadPlaceName = useCallback(async () => {
+    if (!location) return;
+
+    setLoadingPlaceName(true);
+    try {
+      const result = await reverseGeocode(location.latitude, location.longitude);
+      if (result) {
+        // 簡潔な地名を構築（都道府県 + 市区町村 + 町域）
+        const addr = result.address;
+        const parts = [];
+        if (addr.state) parts.push(addr.state);
+        if (addr.city) parts.push(addr.city);
+        if (addr.suburb) parts.push(addr.suburb);
+        
+        const simpleName = parts.length > 0 ? parts.join('') : result.displayName;
+        setPlaceName(simpleName);
+      } else {
+        setPlaceName(null);
+      }
+    } catch (error) {
+      console.error('Failed to load place name:', error);
+      setPlaceName(null);
+    } finally {
+      setLoadingPlaceName(false);
     }
   }, [location]);
 
@@ -509,6 +542,17 @@ export default function MapScreen() {
           />
         </View>
 
+        {location && (
+          <View style={styles.locationInfoContainer}>
+            <LocationInfoCard
+              placeName={placeName}
+              latitude={location.latitude}
+              longitude={location.longitude}
+              loading={loadingPlaceName}
+            />
+          </View>
+        )}
+
         {uvData && (
           <View style={styles.uvCardContainer}>
             <UVCard uvIndex={uvData.uv} compact />
@@ -595,6 +639,10 @@ const styles = StyleSheet.create({
   },
   searchContainer: {
     marginBottom: 12,
+  },
+  locationInfoContainer: {
+    marginBottom: 12,
+    alignItems: 'center',
   },
   uvCardContainer: {
     marginBottom: 12,
