@@ -21,6 +21,11 @@ import * as Haptics from 'expo-haptics';
 
 import { ScreenContainer } from '@/components/screen-container';
 import { useColorScheme } from '@/hooks/use-color-scheme';
+import { useLocation } from '@/hooks/use-location';
+import { searchRoute, formatDistance, formatDuration } from '@/lib/route-service';
+import { searchAddress } from '@/lib/geocoding-service';
+import { analyzeRouteShade, RouteAnalysis } from '@/lib/shade-route-analyzer';
+import { fetchBuildingsNearby } from '@/lib/plateau-service';
 
 interface RouteOption {
   id: string;
@@ -67,13 +72,18 @@ export default function RouteScreen() {
   const colorScheme = useColorScheme();
   const isDark = colorScheme === 'dark';
 
+  const { location } = useLocation();
   const [destination, setDestination] = useState('');
   const [isSearching, setIsSearching] = useState(false);
-  const [routes, setRoutes] = useState<RouteOption[]>([]);
+  const [routes, setRoutes] = useState<RouteAnalysis[]>([]);
   const [selectedRoute, setSelectedRoute] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
   const searchRoutes = useCallback(async () => {
-    if (!destination.trim()) return;
+    if (!destination.trim() || !location) {
+      setError('出発地と目的地を入力してください');
+      return;
+    }
 
     if (Platform.OS !== 'web') {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
@@ -82,16 +92,54 @@ export default function RouteScreen() {
     setIsSearching(true);
     setRoutes([]);
     setSelectedRoute(null);
+    setError(null);
 
-    await new Promise(resolve => setTimeout(resolve, 1500));
+    try {
+      // 目的地をジオコーディング
+      const geocodeResults = await searchAddress(destination);
+      if (geocodeResults.length === 0) {
+        setError('目的地が見つかりませんでした');
+        setIsSearching(false);
+        return;
+      }
 
-    const baseDistance = 500 + Math.random() * 1500;
-    const generatedRoutes = generateSampleRoutes(baseDistance);
-    
-    setRoutes(generatedRoutes);
-    setSelectedRoute(generatedRoutes[0].id);
-    setIsSearching(false);
-  }, [destination]);
+      const destinationPoint = {
+        latitude: geocodeResults[0].latitude,
+        longitude: geocodeResults[0].longitude,
+      };
+
+      // ルートを検索
+      const route = await searchRoute(
+        { latitude: location.latitude, longitude: location.longitude },
+        destinationPoint,
+        'walking'
+      );
+
+      if (!route) {
+        setError('ルートが見つかりませんでした');
+        setIsSearching(false);
+        return;
+      }
+
+      // 建物データを取得
+      const buildings = await fetchBuildingsNearby(
+        location.latitude,
+        location.longitude,
+        1000
+      );
+
+      // ルートを分析
+      const analysis = await analyzeRouteShade(route, buildings);
+      
+      setRoutes([analysis]);
+      setSelectedRoute('route-0');
+    } catch (err) {
+      console.error('Route search error:', err);
+      setError('ルート検索中にエラーが発生しました');
+    } finally {
+      setIsSearching(false);
+    }
+  }, [destination, location]);
 
   const selectRoute = useCallback((routeId: string) => {
     if (Platform.OS !== 'web') {
@@ -194,6 +242,16 @@ export default function RouteScreen() {
             )}
           </Pressable>
 
+          {/* エラー表示 */}
+          {error && (
+            <View style={[styles.errorContainer, { backgroundColor: isDark ? '#7F1D1D' : '#FEE2E2' }]}>
+              <MaterialIcons name="error-outline" size={20} color="#EF4444" />
+              <Text style={[styles.errorText, { color: isDark ? '#FCA5A5' : '#DC2626' }]}>
+                {error}
+              </Text>
+            </View>
+          )}
+
           {/* ルート結果 */}
           {routes.length > 0 && (
             <View style={styles.resultsSection}>
@@ -201,16 +259,16 @@ export default function RouteScreen() {
                 ルート候補
               </Text>
 
-              {routes.map((route) => (
+              {routes.map((routeAnalysis, index) => (
                 <Pressable
-                  key={route.id}
-                  onPress={() => selectRoute(route.id)}
+                  key={`route-${index}`}
+                  onPress={() => selectRoute(`route-${index}`)}
                   style={({ pressed }) => [
                     styles.routeCard,
                     {
                       backgroundColor: isDark ? '#1E293B' : '#FFFFFF',
-                      borderColor: selectedRoute === route.id ? '#6366F1' : (isDark ? '#334155' : '#E2E8F0'),
-                      borderWidth: selectedRoute === route.id ? 2 : 1,
+                      borderColor: selectedRoute === `route-${index}` ? '#6366F1' : (isDark ? '#334155' : '#E2E8F0'),
+                      borderWidth: selectedRoute === `route-${index}` ? 2 : 1,
                       opacity: pressed ? 0.9 : 1,
                     },
                   ]}
@@ -218,16 +276,16 @@ export default function RouteScreen() {
                   <View style={styles.routeHeader}>
                     <View style={styles.routeNameRow}>
                       <Text style={[styles.routeName, { color: isDark ? '#F8FAFC' : '#0F172A' }]}>
-                        {route.name}
+                        日陰優先ルート
                       </Text>
-                      {route.isRecommended && (
+                      {routeAnalysis.isRecommended && (
                         <View style={styles.recommendedBadge}>
                           <MaterialIcons name="star" size={12} color="#FFFFFF" />
                           <Text style={styles.recommendedText}>推奨</Text>
                         </View>
                       )}
                     </View>
-                    {selectedRoute === route.id && (
+                    {selectedRoute === `route-${index}` && (
                       <MaterialIcons name="check-circle" size={24} color="#6366F1" />
                     )}
                   </View>
@@ -236,13 +294,13 @@ export default function RouteScreen() {
                     <View style={styles.routeDetailItem}>
                       <MaterialIcons name="schedule" size={16} color={isDark ? '#94A3B8' : '#64748B'} />
                       <Text style={[styles.routeDetailText, { color: isDark ? '#F8FAFC' : '#0F172A' }]}>
-                        {route.duration}分
+                        {formatDuration(routeAnalysis.route.duration)}
                       </Text>
                     </View>
                     <View style={styles.routeDetailItem}>
                       <MaterialIcons name="straighten" size={16} color={isDark ? '#94A3B8' : '#64748B'} />
                       <Text style={[styles.routeDetailText, { color: isDark ? '#F8FAFC' : '#0F172A' }]}>
-                        {route.distance}m
+                        {formatDistance(routeAnalysis.route.distance)}
                       </Text>
                     </View>
                   </View>
@@ -253,10 +311,10 @@ export default function RouteScreen() {
                         日陰率
                       </Text>
                       <Text style={[styles.routeStatValue, { color: '#22C55E' }]}>
-                        {route.shadePercentage}%
+                        {routeAnalysis.shadePercentage}%
                       </Text>
                       <View style={[styles.statBar, { backgroundColor: isDark ? '#334155' : '#E2E8F0' }]}>
-                        <View style={[styles.statBarFill, { width: `${route.shadePercentage}%`, backgroundColor: '#22C55E' }]} />
+                        <View style={[styles.statBarFill, { width: `${routeAnalysis.shadePercentage}%`, backgroundColor: '#22C55E' }]} />
                       </View>
                     </View>
                     <View style={styles.routeStat}>
@@ -264,10 +322,10 @@ export default function RouteScreen() {
                         UV露出
                       </Text>
                       <Text style={[styles.routeStatValue, { color: '#EF4444' }]}>
-                        {route.uvExposure}%
+                        {routeAnalysis.uvExposure}%
                       </Text>
                       <View style={[styles.statBar, { backgroundColor: isDark ? '#334155' : '#E2E8F0' }]}>
-                        <View style={[styles.statBarFill, { width: `${route.uvExposure}%`, backgroundColor: '#EF4444' }]} />
+                        <View style={[styles.statBarFill, { width: `${routeAnalysis.uvExposure}%`, backgroundColor: '#EF4444' }]} />
                       </View>
                     </View>
                   </View>
@@ -387,6 +445,18 @@ const styles = StyleSheet.create({
     paddingVertical: 14,
     borderRadius: 12,
     marginBottom: 24,
+  },
+  errorContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    padding: 12,
+    borderRadius: 8,
+    marginBottom: 16,
+  },
+  errorText: {
+    fontSize: 14,
+    flex: 1,
   },
   searchButtonText: {
     fontSize: 16,
