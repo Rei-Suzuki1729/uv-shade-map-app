@@ -25,6 +25,7 @@ import { LocationInfoCard } from '@/components/location-info-card';
 import { useLocation } from '@/hooks/use-location';
 import { reverseGeocode } from '@/lib/geocoding-service';
 import { useColorScheme } from '@/hooks/use-color-scheme';
+import { useRoute } from '@/lib/route-context';
 import { type UVData, getUVData } from '@/lib/uv-service';
 import { getApiBaseUrl } from '@/constants/oauth';
 import { trpc } from '@/lib/trpc';
@@ -85,6 +86,7 @@ function MapView({
   shadows,
   uvData,
   isDark,
+  routeCoordinates,
 }: {
   location: { latitude: number; longitude: number } | null;
   mapMode: MapMode;
@@ -92,6 +94,7 @@ function MapView({
   shadows: ShadowPolygon[];
   uvData: UVData | null;
   isDark: boolean;
+  routeCoordinates?: Array<{ latitude: number; longitude: number }>;
 }) {
   const viewBoxSize = 400;
   const centerX = viewBoxSize / 2;
@@ -221,6 +224,53 @@ function MapView({
           </>
         )}
 
+        {/* ルート描画 */}
+        {routeCoordinates && routeCoordinates.length > 0 && (
+          <>
+            {/* ルート線 */}
+            <polyline
+              points={routeCoordinates
+                .map(coord => {
+                  const { x, y } = toSvgCoords(coord.latitude, coord.longitude);
+                  return `${x},${y}`;
+                })
+                .join(' ')}
+              fill="none"
+              stroke="#6366F1"
+              strokeWidth={4}
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+            {/* 出発地マーカー */}
+            {(() => {
+              const start = toSvgCoords(routeCoordinates[0].latitude, routeCoordinates[0].longitude);
+              return (
+                <>
+                  <circle cx={start.x} cy={start.y} r={12} fill="#22C55E" stroke="#FFFFFF" strokeWidth={3} />
+                  <text x={start.x} y={start.y + 25} textAnchor="middle" fill={isDark ? '#FFFFFF' : '#000000'} fontSize="12" fontWeight="bold">
+                    出発
+                  </text>
+                </>
+              );
+            })()}
+            {/* 目的地マーカー */}
+            {(() => {
+              const end = toSvgCoords(
+                routeCoordinates[routeCoordinates.length - 1].latitude,
+                routeCoordinates[routeCoordinates.length - 1].longitude
+              );
+              return (
+                <>
+                  <circle cx={end.x} cy={end.y} r={12} fill="#EF4444" stroke="#FFFFFF" strokeWidth={3} />
+                  <text x={end.x} y={end.y + 25} textAnchor="middle" fill={isDark ? '#FFFFFF' : '#000000'} fontSize="12" fontWeight="bold">
+                    目的
+                  </text>
+                </>
+              );
+            })()}
+          </>
+        )}
+
         {/* 現在地マーカー */}
         <circle
           cx={centerX}
@@ -250,6 +300,7 @@ function NativeMapView({
   uvData,
   isDark,
   onRegionChange,
+  routeCoordinates,
 }: {
   location: { latitude: number; longitude: number } | null;
   mapMode: MapMode;
@@ -258,9 +309,10 @@ function NativeMapView({
   uvData: UVData | null;
   isDark: boolean;
   onRegionChange: () => void;
+  routeCoordinates?: Array<{ latitude: number; longitude: number }>;
 }) {
   const MapViewComponent = require('react-native-maps').default;
-  const { Polygon, PROVIDER_GOOGLE } = require('react-native-maps');
+  const { Polygon, Polyline, Marker, PROVIDER_GOOGLE } = require('react-native-maps');
 
   const darkMapStyle = [
     { elementType: 'geometry', stylers: [{ color: '#1d2c4d' }] },
@@ -321,6 +373,31 @@ function NativeMapView({
           strokeWidth={2}
         />
       )}
+
+      {/* ルート描画 */}
+      {routeCoordinates && routeCoordinates.length > 0 && (
+        <>
+          <Polyline
+            coordinates={routeCoordinates}
+            strokeColor="#6366F1"
+            strokeWidth={4}
+            lineCap="round"
+            lineJoin="round"
+          />
+          {/* 出発地マーカー */}
+          <Marker
+            coordinate={routeCoordinates[0]}
+            title="出発地"
+            pinColor="green"
+          />
+          {/* 目的地マーカー */}
+          <Marker
+            coordinate={routeCoordinates[routeCoordinates.length - 1]}
+            title="目的地"
+            pinColor="red"
+          />
+        </>
+      )}
     </MapViewComponent>
   );
 }
@@ -331,6 +408,7 @@ export default function MapScreen() {
   const isDark = colorScheme === 'dark';
 
   const { location, loading: locationLoading, error: locationError, refresh: refreshLocation } = useLocation();
+  const { currentRoute, isRouteVisible } = useRoute();
   const [mapMode, setMapMode] = useState<MapMode>('standard');
   const [uvData, setUVData] = useState<UVData | null>(null);
   const [buildings, setBuildings] = useState<Building[]>([]);
@@ -341,6 +419,12 @@ export default function MapScreen() {
   const [dataError, setDataError] = useState<string | null>(null);
   const [placeName, setPlaceName] = useState<string | null>(null);
   const [loadingPlaceName, setLoadingPlaceName] = useState(false);
+  
+  // ルート座標を取得
+  const routeCoordinates = useMemo(() => {
+    if (!currentRoute || !isRouteVisible) return undefined;
+    return currentRoute.route.geometry;
+  }, [currentRoute, isRouteVisible]);
 
   // 現在地が変更されたらデータを取得
   useEffect(() => {
@@ -520,6 +604,7 @@ export default function MapScreen() {
           shadows={shadows}
           uvData={uvData}
           isDark={isDark}
+          routeCoordinates={routeCoordinates}
         />
       ) : (
         <NativeMapView
@@ -530,6 +615,7 @@ export default function MapScreen() {
           uvData={uvData}
           isDark={isDark}
           onRegionChange={onRegionChange}
+          routeCoordinates={routeCoordinates}
         />
       )}
 

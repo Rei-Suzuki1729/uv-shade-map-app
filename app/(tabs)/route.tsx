@@ -26,6 +26,8 @@ import { searchRoute, formatDistance, formatDuration } from '@/lib/route-service
 import { searchAddress } from '@/lib/geocoding-service';
 import { analyzeRouteShade, RouteAnalysis } from '@/lib/shade-route-analyzer';
 import { fetchBuildingsNearby } from '@/lib/plateau-service';
+import { useRoute } from '@/lib/route-context';
+import { useRouter } from 'expo-router';
 
 interface RouteOption {
   id: string;
@@ -73,6 +75,8 @@ export default function RouteScreen() {
   const isDark = colorScheme === 'dark';
 
   const { location } = useLocation();
+  const { setCurrentRoute, setIsRouteVisible } = useRoute();
+  const router = useRouter();
   const [destination, setDestination] = useState('');
   const [isSearching, setIsSearching] = useState(false);
   const [routes, setRoutes] = useState<RouteAnalysis[]>([]);
@@ -133,6 +137,13 @@ export default function RouteScreen() {
       
       setRoutes([analysis]);
       setSelectedRoute('route-0');
+      
+      // ルートデータをコンテキストに保存
+      setCurrentRoute(analysis);
+      setIsRouteVisible(true);
+      
+      // マップタブに自動切り替え
+      router.push('/(tabs)');
     } catch (err) {
       console.error('Route search error:', err);
       setError('ルート検索中にエラーが発生しました');
