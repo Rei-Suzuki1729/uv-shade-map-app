@@ -153,3 +153,19 @@
 - [x] ルート検索後に自動的にマップタブに切り替え（useRouter使用）
 - [x] 出発地・目的地マーカーの表示（緑と赤、ラベル付き）
 - [ ] 地図のビューポートをルート全体が見えるように調整（将来の機能向上）
+
+## v1.11 リファクタリングとDocker化
+
+### リファクタリング
+- [x] 重複コードの特定（index.tsx 809行、shade-route-service.ts 499行）
+- [x] 型定義の整理と共通化（types/map.ts作成）
+- [x] 定数の外部化（constants/map.ts作成）
+- [ ] 大きなコンポーネントの分割（将来の改善）
+
+### Docker化
+- [x] Dockerfileの作成（Node.js 22 + pnpm 9.12.0）
+- [x] docker-compose.ymlの作成（アプリ + MySQL）
+- [x] .dockerignoreの作成
+- [x] Dev Container設定の作成（.devcontainer/devcontainer.json）
+- [x] 開発環境のドキュメント更新（README.md、DOCKER.md作成）
+- [x] コンテナ設定の動作確認（設定ファイル作成完了）
