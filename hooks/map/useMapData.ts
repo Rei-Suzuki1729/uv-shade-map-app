@@ -48,7 +48,10 @@ async function setCachedData<T>(key: string, data: T): Promise<void> {
   }
 }
 
-export function useMapData(location: { latitude: number; longitude: number } | null) {
+export function useMapData(
+  location: { latitude: number; longitude: number } | null,
+  currentTime?: Date
+) {
   const [uvData, setUVData] = useState<UVData | null>(null);
   const [buildings, setBuildings] = useState<Building[]>([]);
   const [shadows, setShadows] = useState<ShadowPolygon[]>([]);
@@ -56,6 +59,7 @@ export function useMapData(location: { latitude: number; longitude: number } | n
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // データ取得（UV、建物）
   const loadData = useCallback(async () => {
     if (!location) return;
 
@@ -131,18 +135,6 @@ export function useMapData(location: { latitude: number; longitude: number } | n
         await setCachedData(CACHE_KEYS.BUILDINGS, buildingData);
       }
       setBuildings(buildingData);
-
-      // 太陽位置と影を計算
-      const now = new Date();
-      const newSunPosition = getSunPosition(now, location.latitude, location.longitude);
-      setSunPosition(newSunPosition);
-
-      if (isSunAboveHorizon(newSunPosition)) {
-        const newShadows = calculateAllShadows(buildingData, newSunPosition, location.latitude);
-        setShadows(newShadows);
-      } else {
-        setShadows([]);
-      }
     } catch (error) {
       console.error('Failed to load data:', error);
       setError('データの取得に失敗しました');
@@ -150,6 +142,22 @@ export function useMapData(location: { latitude: number; longitude: number } | n
       setIsLoading(false);
     }
   }, [location]);
+
+  // 太陽位置と影の計算（時刻、場所、建物データに依存）
+  useEffect(() => {
+    if (!location) return;
+
+    const time = currentTime || new Date();
+    const newSunPosition = getSunPosition(time, location.latitude, location.longitude);
+    setSunPosition(newSunPosition);
+
+    if (buildings.length > 0 && isSunAboveHorizon(newSunPosition)) {
+      const newShadows = calculateAllShadows(buildings, newSunPosition, location.latitude);
+      setShadows(newShadows);
+    } else {
+      setShadows([]);
+    }
+  }, [location, buildings, currentTime]);
 
   // locationが変更されたらデータを再取得
   useEffect(() => {
