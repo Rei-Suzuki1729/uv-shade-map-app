@@ -3,17 +3,23 @@ import { COOKIE_NAME } from "../shared/const.js";
 import { getSessionCookieOptions } from "./_core/cookies";
 import { systemRouter } from "./_core/systemRouter";
 import { publicProcedure, protectedProcedure, router } from "./_core/trpc";
-import { getDb } from './db';
+import {
+  getDb,
+  getCachedUvData,
+  cacheUvData,
+  getFavoriteLocations,
+  addFavoriteLocation,
+  deleteFavoriteLocation,
+  getSearchHistory,
+  addSearchHistory,
+  saveRouteHistory,
+  getNotificationSettings,
+  updateNotificationSettings,
+} from './db';
 import { fetchUVDataFromOpenMeteo } from '../lib/open-meteo-service';
 import { searchAddress } from '../lib/geocoding-service';
-import {
-  favoriteLocations,
-  searchHistory,
-  uvDataCache,
-  routeHistory,
-  notificationSettings,
-} from '../drizzle/schema';
-import { eq, and, gte, desc } from 'drizzle-orm';
+import { notificationSettings } from '../drizzle/schema';
+import { eq } from 'drizzle-orm';
 import { generateShadeTiles, generateSampleBuildings } from './worker-client';
 import { join } from 'path';
 import { existsSync } from 'fs';
@@ -41,36 +47,19 @@ export const appRouter = router({
       }))
       .query(async ({ input }) => {
         const { latitude, longitude } = input;
-        const latStr = latitude.toFixed(3);
-        const lngStr = longitude.toFixed(3);
         const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000);
         
-        const db = await getDb();
-        if (!db) {
-          throw new Error('Database not available');
-        }
+        const cached = await getCachedUvData(latitude, longitude, fiveMinutesAgo);
         
-        const cached = await db
-          .select()
-          .from(uvDataCache)
-          .where(
-            and(
-              eq(uvDataCache.latitude, latStr),
-              eq(uvDataCache.longitude, lngStr),
-              gte(uvDataCache.fetchedAt, fiveMinutesAgo)
-            )
-          )
-          .limit(1);
-        
-        if (cached.length > 0) {
+        if (cached) {
           return {
             source: 'cache' as const,
             data: {
-              uvIndex: parseFloat(cached[0].uvIndex),
-              uvMax: cached[0].uvMax ? parseFloat(cached[0].uvMax) : undefined,
-              uvMaxTime: cached[0].uvMaxTime || undefined,
-              safeExposureTime: cached[0].safeExposureTime || undefined,
-              timestamp: cached[0].fetchedAt.toISOString(),
+              uvIndex: parseFloat(cached.uvIndex),
+              uvMax: cached.uvMax ? parseFloat(cached.uvMax) : undefined,
+              uvMaxTime: cached.uvMaxTime || undefined,
+              safeExposureTime: cached.safeExposureTime || undefined,
+              timestamp: cached.fetchedAt.toISOString(),
             },
           };
         }
@@ -101,9 +90,9 @@ export const appRouter = router({
           };
         }
         
-        await db.insert(uvDataCache).values({
-          latitude: latStr,
-          longitude: lngStr,
+        await cacheUvData({
+          latitude: latitude.toFixed(3),
+          longitude: longitude.toFixed(3),
           uvIndex: uvData.uvIndex.toFixed(2),
           uvMax: uvData.uvMax.toFixed(2),
           uvMaxTime: uvData.uvMaxTime,
@@ -122,13 +111,7 @@ export const appRouter = router({
   favorites: router({
     list: protectedProcedure
       .query(async ({ ctx }) => {
-        const db = await getDb();
-        if (!db) throw new Error('Database not available');
-        const locations = await db
-          .select()
-          .from(favoriteLocations)
-          .where(eq(favoriteLocations.userId, ctx.user.id))
-          .orderBy(desc(favoriteLocations.createdAt));
+        const locations = await getFavoriteLocations(ctx.user.id);
         
         return locations.map((loc: any) => ({
           ...loc,
@@ -145,9 +128,7 @@ export const appRouter = router({
         longitude: z.number(),
       }))
       .mutation(async ({ ctx, input }) => {
-        const db = await getDb();
-        if (!db) throw new Error('Database not available');
-        const result = await db.insert(favoriteLocations).values({
+        const result = await addFavoriteLocation({
           userId: ctx.user.id,
           name: input.name,
           address: input.address,
@@ -163,17 +144,7 @@ export const appRouter = router({
         id: z.number(),
       }))
       .mutation(async ({ ctx, input }) => {
-        const db = await getDb();
-        if (!db) throw new Error('Database not available');
-        await db
-          .delete(favoriteLocations)
-          .where(
-            and(
-              eq(favoriteLocations.id, input.id),
-              eq(favoriteLocations.userId, ctx.user.id)
-            )
-          );
-        
+        await deleteFavoriteLocation(input.id, ctx.user.id);
         return { success: true };
       }),
   }),
@@ -184,14 +155,7 @@ export const appRouter = router({
         limit: z.number().default(20),
       }))
       .query(async ({ ctx, input }) => {
-        const db = await getDb();
-        if (!db) throw new Error('Database not available');
-        const history = await db
-          .select()
-          .from(searchHistory)
-          .where(eq(searchHistory.userId, ctx.user.id))
-          .orderBy(desc(searchHistory.searchedAt))
-          .limit(input.limit);
+        const history = await getSearchHistory(ctx.user.id, input.limit);
         
         return history.map((h: any) => ({
           ...h,
@@ -208,9 +172,7 @@ export const appRouter = router({
         resultCount: z.number().default(0),
       }))
       .mutation(async ({ ctx, input }) => {
-        const db = await getDb();
-        if (!db) throw new Error('Database not available');
-        await db.insert(searchHistory).values({
+        await addSearchHistory({
           userId: ctx.user.id,
           query: input.query,
           latitude: input.latitude?.toString(),
@@ -352,9 +314,7 @@ export const appRouter = router({
         uvExposure: z.number().optional(),
       }))
       .mutation(async ({ ctx, input }) => {
-        const db = await getDb();
-        if (!db) throw new Error('Database not available');
-        await db.insert(routeHistory).values({
+        await saveRouteHistory({
           userId: ctx.user.id,
           startName: input.startName,
           startLat: input.startLat.toString(),
@@ -469,15 +429,20 @@ export const appRouter = router({
   notifications: router({
     getSettings: protectedProcedure
       .query(async ({ ctx }) => {
-        const db = await getDb();
-        if (!db) throw new Error('Database not available');
-        const settings = await db
-          .select()
-          .from(notificationSettings)
-          .where(eq(notificationSettings.userId, ctx.user.id))
-          .limit(1);
+        const settings = await getNotificationSettings(ctx.user.id);
         
-        if (settings.length === 0) {
+        if (!settings) {
+          // No settings found, create default
+          // We can use direct DB insert here or add another helper function.
+          // Since getNotificationSettings is just a getter, the router handles logic.
+          // But "add feature queries" suggests we should have `createDefaultNotificationSettings` or similar.
+          // I will use direct DB via getDb() here OR better, just use getDb() as the function is not in db.ts yet?
+          // Wait, I implemented updateNotificationSettings, but not create.
+          // The previous code did: db.insert(...).
+
+          const db = await getDb();
+          if (!db) throw new Error('Database not available');
+
           await db.insert(notificationSettings).values({
             userId: ctx.user.id,
             highUvAlert: 1,
@@ -495,13 +460,12 @@ export const appRouter = router({
           };
         }
         
-        const s = settings[0];
         return {
-          highUvAlert: s.highUvAlert === 1,
-          highUvThreshold: parseFloat(s.highUvThreshold),
-          shadeReminder: s.shadeReminder === 1,
-          shadeReminderInterval: s.shadeReminderInterval,
-          pushToken: s.pushToken,
+          highUvAlert: settings.highUvAlert === 1,
+          highUvThreshold: parseFloat(settings.highUvThreshold),
+          shadeReminder: settings.shadeReminder === 1,
+          shadeReminderInterval: settings.shadeReminderInterval,
+          pushToken: settings.pushToken,
         };
       }),
 
@@ -514,9 +478,6 @@ export const appRouter = router({
         pushToken: z.string().optional(),
       }))
       .mutation(async ({ ctx, input }) => {
-        const db = await getDb();
-        if (!db) throw new Error('Database not available');
-        
         const updates: any = {};
         if (input.highUvAlert !== undefined) updates.highUvAlert = input.highUvAlert ? 1 : 0;
         if (input.highUvThreshold !== undefined) updates.highUvThreshold = input.highUvThreshold.toString();
@@ -524,10 +485,7 @@ export const appRouter = router({
         if (input.shadeReminderInterval !== undefined) updates.shadeReminderInterval = input.shadeReminderInterval;
         if (input.pushToken !== undefined) updates.pushToken = input.pushToken;
         
-        await db
-          .update(notificationSettings)
-          .set(updates)
-          .where(eq(notificationSettings.userId, ctx.user.id));
+        await updateNotificationSettings(ctx.user.id, updates);
         
         return { success: true };
       }),
