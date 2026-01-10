@@ -2,6 +2,8 @@ import "dotenv/config";
 import express from "express";
 import { createServer } from "http";
 import net from "net";
+import path from "path";
+import fs from "fs";
 import { createExpressMiddleware } from "@trpc/server/adapters/express";
 import { registerOAuthRoutes } from "./oauth";
 import { appRouter } from "../routers";
@@ -58,6 +60,34 @@ async function startServer() {
 
   app.get("/api/health", (_req, res) => {
     res.json({ ok: true, timestamp: Date.now() });
+  });
+
+  // タイル配信エンドポイント
+  // GET /tiles/shade/{timeBucket}/{z}/{x}/{y}.png
+  const tilesDir = path.join(process.cwd(), 'tiles', 'shade');
+
+  // タイルディレクトリが存在しない場合は作成
+  if (!fs.existsSync(tilesDir)) {
+    fs.mkdirSync(tilesDir, { recursive: true });
+    console.log(`[tiles] Created tiles directory: ${tilesDir}`);
+  }
+
+  app.get("/tiles/shade/:timeBucket/:z/:x/:y.png", (req, res) => {
+    const { timeBucket, z, x, y } = req.params;
+    const tilePath = path.join(tilesDir, timeBucket, z, x, `${y}.png`);
+
+    // ファイルが存在するか確認
+    if (fs.existsSync(tilePath)) {
+      res.setHeader('Content-Type', 'image/png');
+      res.setHeader('Cache-Control', 'public, max-age=3600'); // 1時間キャッシュ
+      res.sendFile(tilePath);
+    } else {
+      // タイルが存在しない場合は透明なPNGを返す（地図が壊れないように）
+      res.status(404).json({
+        error: 'Tile not found',
+        message: `Tile not generated yet: ${timeBucket}/${z}/${x}/${y}.png`
+      });
+    }
   });
 
   app.use(

@@ -1,0 +1,26 @@
+# UV Shade Map - Python Worker Dependencies
+# 日陰タイル生成用パッケージ
+
+# 数値計算
+numpy>=1.24.0
+
+# 画像生成（PNGタイル）
+Pillow>=10.0.0
+
+# 座標変換
+pyproj>=3.5.0
+
+# 太陽位置計算
+pvlib>=0.10.0
+
+# ジオメトリ計算（影の形状）
+shapely>=2.0.0
+
+# GeoJSON処理（PLATEAU建物データ）
+geojson>=3.0.0
+
+# タイル座標計算
+mercantile>=1.2.0
+
+# HTTPリクエスト（必要に応じて）
+requests>=2.31.0

@@ -6,14 +6,17 @@ import { publicProcedure, protectedProcedure, router } from "./_core/trpc";
 import { getDb } from './db';
 import { fetchUVDataFromOpenMeteo } from '../lib/open-meteo-service';
 import { searchAddress } from '../lib/geocoding-service';
-import { 
-  favoriteLocations, 
-  searchHistory, 
-  uvDataCache, 
+import {
+  favoriteLocations,
+  searchHistory,
+  uvDataCache,
   routeHistory,
   notificationSettings,
 } from '../drizzle/schema';
 import { eq, and, gte, desc } from 'drizzle-orm';
+import { generateShadeTiles, generateSampleBuildings } from './worker-client';
+import { join } from 'path';
+import { existsSync } from 'fs';
 
 export const appRouter = router({
   // if you need to use socket.io, read and register route in server/_core/index.ts, all api should start with '/api/' so that the gateway can route correctly
@@ -264,6 +267,76 @@ export const appRouter = router({
   }),
 
   routes: router({
+    search: publicProcedure
+      .input(z.object({
+        start: z.object({
+          latitude: z.number(),
+          longitude: z.number(),
+        }),
+        end: z.object({
+          latitude: z.number(),
+          longitude: z.number(),
+        }),
+        profile: z.enum(['driving', 'walking', 'cycling']).default('walking'),
+      }))
+      .mutation(async ({ input }) => {
+        const { start, end, profile } = input;
+        const OSRM_BASE_URL = 'https://router.project-osrm.org';
+
+        try {
+          const url = `${OSRM_BASE_URL}/route/v1/${profile}/` +
+            `${start.longitude},${start.latitude};` +
+            `${end.longitude},${end.latitude}` +
+            `?overview=full&geometries=geojson&steps=true`;
+
+          const response = await fetch(url);
+
+          if (!response.ok) {
+            throw new Error(`OSRM API error: ${response.status}`);
+          }
+
+          const data = await response.json();
+
+          if (!data.routes || data.routes.length === 0) {
+            return { success: false, route: null };
+          }
+
+          const route = data.routes[0];
+
+          // GeoJSON座標を変換 (経度, 緯度) -> {latitude, longitude}
+          const geometry = route.geometry.coordinates.map(
+            (coord: [number, number]) => ({
+              longitude: coord[0],
+              latitude: coord[1],
+            })
+          );
+
+          // ステップ情報を変換
+          const steps = (route.legs[0]?.steps || []).map((step: any) => ({
+            distance: step.distance,
+            duration: step.duration,
+            instruction: step.maneuver?.instruction || '',
+            coordinates: step.geometry.coordinates.map((coord: [number, number]) => ({
+              longitude: coord[0],
+              latitude: coord[1],
+            })),
+          }));
+
+          return {
+            success: true,
+            route: {
+              distance: route.distance,
+              duration: route.duration,
+              geometry,
+              steps,
+            },
+          };
+        } catch (error) {
+          console.error('Route search error:', error);
+          return { success: false, route: null, error: String(error) };
+        }
+      }),
+
     save: protectedProcedure
       .input(z.object({
         startName: z.string().optional(),
@@ -295,8 +368,101 @@ export const appRouter = router({
           shadePercentage: input.shadePercentage?.toString(),
           uvExposure: input.uvExposure?.toString(),
         });
-        
+
         return { success: true };
+      }),
+  }),
+
+  shade: router({
+    generateTiles: publicProcedure
+      .input(z.object({
+        bounds: z.object({
+          north: z.number(),
+          south: z.number(),
+          east: z.number(),
+          west: z.number(),
+        }),
+        startTime: z.string(), // ISO 8601形式
+        endTime: z.string(),   // ISO 8601形式
+        stepMinutes: z.number().default(10), // 時間刻み（分）
+        zooms: z.array(z.number()).default([15, 16, 17]), // ズームレベル
+      }))
+      .mutation(async ({ input }) => {
+        const jobId = `shade-job-${Date.now()}`;
+
+        console.log('Shade tile generation requested:', {
+          jobId,
+          bounds: input.bounds,
+          startTime: input.startTime,
+          endTime: input.endTime,
+          stepMinutes: input.stepMinutes,
+          zooms: input.zooms,
+        });
+
+        // 建物データのパスを確認（PoC用サンプルデータ）
+        const buildingsPath = join(process.cwd(), 'server', 'worker', 'data', 'buildings-sample.geojson');
+
+        // 建物データが存在しない場合は生成
+        if (!existsSync(buildingsPath)) {
+          console.log('Sample buildings data not found, generating...');
+          try {
+            await generateSampleBuildings(input.bounds, buildingsPath, 10);
+            console.log('Sample buildings data generated successfully');
+          } catch (error) {
+            console.error('Failed to generate sample buildings:', error);
+            return {
+              success: false,
+              jobId,
+              message: 'Failed to generate sample buildings data',
+              error: String(error),
+            };
+          }
+        }
+
+        // 非同期でPythonワーカーを起動（バックグラウンド実行）
+        // PoCでは同期実行だが、本番では非同期・ジョブキューに投げる
+        try {
+          const result = await generateShadeTiles(jobId, {
+            bounds: input.bounds,
+            startTime: input.startTime,
+            endTime: input.endTime,
+            stepMinutes: input.stepMinutes,
+            zooms: input.zooms,
+          }, buildingsPath);
+
+          return {
+            success: result.success,
+            jobId,
+            tilesGenerated: result.tiles_generated,
+            timeBuckets: result.time_buckets,
+            message: 'Tile generation completed',
+          };
+        } catch (error) {
+          console.error('Shade tile generation failed:', error);
+          return {
+            success: false,
+            jobId,
+            message: 'Tile generation failed',
+            error: String(error),
+          };
+        }
+      }),
+
+    getTileStatus: publicProcedure
+      .input(z.object({
+        jobId: z.string(),
+      }))
+      .query(async ({ input }) => {
+        // TODO: ジョブステータスをチェックする実装
+        // PoCでは仕様定義のみ
+        console.log('Checking tile generation status:', input.jobId);
+
+        return {
+          jobId: input.jobId,
+          status: 'done' as const, // queued | running | done | error
+          progress: 100,
+          message: 'PoC: Status check not yet implemented',
+        };
       }),
   }),
 
