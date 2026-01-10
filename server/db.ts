@@ -1,6 +1,6 @@
-import { eq } from "drizzle-orm";
+import { eq, desc, and } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
-import { InsertUser, users } from "../drizzle/schema";
+import { InsertUser, users, notificationHistory } from "../drizzle/schema";
 import { ENV } from "./_core/env";
 
 let _db: ReturnType<typeof drizzle> | null = null;
@@ -90,3 +90,58 @@ export async function getUserByOpenId(openId: string) {
 }
 
 // TODO: add feature queries here as your schema grows.
+
+export async function getNotificationHistory(userId: number, limit: number = 20) {
+  const db = await getDb();
+  if (!db) {
+    console.warn("[Database] Cannot get notification history: database not available");
+    return [];
+  }
+
+  return await db
+    .select()
+    .from(notificationHistory)
+    .where(eq(notificationHistory.userId, userId))
+    .orderBy(desc(notificationHistory.sentAt))
+    .limit(limit);
+}
+
+export async function markNotificationAsRead(id: number, userId: number) {
+  const db = await getDb();
+  if (!db) {
+    console.warn("[Database] Cannot mark notification as read: database not available");
+    return false;
+  }
+
+  await db
+    .update(notificationHistory)
+    .set({ readFlag: 1 })
+    .where(
+      and(
+        eq(notificationHistory.id, id),
+        eq(notificationHistory.userId, userId)
+      )
+    );
+
+  return true;
+}
+
+export async function markAllNotificationsAsRead(userId: number) {
+  const db = await getDb();
+  if (!db) {
+    console.warn("[Database] Cannot mark all notifications as read: database not available");
+    return false;
+  }
+
+  await db
+    .update(notificationHistory)
+    .set({ readFlag: 1 })
+    .where(
+      and(
+        eq(notificationHistory.userId, userId),
+        eq(notificationHistory.readFlag, 0)
+      )
+    );
+
+  return true;
+}

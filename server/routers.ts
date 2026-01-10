@@ -3,7 +3,12 @@ import { COOKIE_NAME } from "../shared/const.js";
 import { getSessionCookieOptions } from "./_core/cookies";
 import { systemRouter } from "./_core/systemRouter";
 import { publicProcedure, protectedProcedure, router } from "./_core/trpc";
-import { getDb } from './db';
+import {
+  getDb,
+  getNotificationHistory,
+  markNotificationAsRead,
+  markAllNotificationsAsRead,
+} from './db';
 import { fetchUVDataFromOpenMeteo } from '../lib/open-meteo-service';
 import { searchAddress } from '../lib/geocoding-service';
 import { 
@@ -364,6 +369,33 @@ export const appRouter = router({
           .where(eq(notificationSettings.userId, ctx.user.id));
         
         return { success: true };
+      }),
+
+    history: protectedProcedure
+      .input(z.object({
+        limit: z.number().default(20),
+      }))
+      .query(async ({ ctx, input }) => {
+        const history = await getNotificationHistory(ctx.user.id, input.limit);
+        return history.map((h) => ({
+          ...h,
+          readFlag: h.readFlag === 1,
+        }));
+      }),
+
+    markRead: protectedProcedure
+      .input(z.object({
+        id: z.number(),
+      }))
+      .mutation(async ({ ctx, input }) => {
+        const success = await markNotificationAsRead(input.id, ctx.user.id);
+        return { success };
+      }),
+
+    markAllRead: protectedProcedure
+      .mutation(async ({ ctx }) => {
+        const success = await markAllNotificationsAsRead(ctx.user.id);
+        return { success };
       }),
   }),
 });
