@@ -1,6 +1,16 @@
-import { eq, desc, and } from "drizzle-orm";
+import { eq, and, desc, gte } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
-import { InsertUser, users, notificationHistory } from "../drizzle/schema";
+import {
+  InsertUser,
+  users,
+  favoriteLocations, NewFavoriteLocation,
+  searchHistory, NewSearchHistory,
+  uvDataCache, NewUvDataCache,
+  routeHistory, NewRouteHistory,
+  notificationSettings,
+  NewNotificationSettings,
+  notificationHistory,
+} from "../drizzle/schema";
 import { ENV } from "./_core/env";
 
 let _db: ReturnType<typeof drizzle> | null = null;
@@ -89,8 +99,122 @@ export async function getUserByOpenId(openId: string) {
   return result.length > 0 ? result[0] : undefined;
 }
 
-// TODO: add feature queries here as your schema grows.
+// Favorites
+export async function getFavoriteLocations(userId: number) {
+  const db = await getDb();
+  if (!db) return [];
 
+  return db
+    .select()
+    .from(favoriteLocations)
+    .where(eq(favoriteLocations.userId, userId))
+    .orderBy(desc(favoriteLocations.createdAt));
+}
+
+export async function addFavoriteLocation(location: NewFavoriteLocation) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  return db.insert(favoriteLocations).values(location);
+}
+
+export async function deleteFavoriteLocation(id: number, userId: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  return db
+    .delete(favoriteLocations)
+    .where(
+      and(
+        eq(favoriteLocations.id, id),
+        eq(favoriteLocations.userId, userId)
+      )
+    );
+}
+
+// Search History
+export async function getSearchHistory(userId: number, limitCount: number = 20) {
+  const db = await getDb();
+  if (!db) return [];
+
+  return db
+    .select()
+    .from(searchHistory)
+    .where(eq(searchHistory.userId, userId))
+    .orderBy(desc(searchHistory.searchedAt))
+    .limit(limitCount);
+}
+
+export async function addSearchHistory(history: NewSearchHistory) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  return db.insert(searchHistory).values(history);
+}
+
+// UV Data
+export async function getCachedUvData(latitude: number | string, longitude: number | string, minFetchedAt?: Date) {
+  const db = await getDb();
+  if (!db) return undefined;
+
+  const latStr = typeof latitude === 'number' ? latitude.toFixed(3) : latitude;
+  const lngStr = typeof longitude === 'number' ? longitude.toFixed(3) : longitude;
+
+  let query = db
+    .select()
+    .from(uvDataCache)
+    .where(
+      and(
+        eq(uvDataCache.latitude, latStr),
+        eq(uvDataCache.longitude, lngStr),
+        minFetchedAt ? gte(uvDataCache.fetchedAt, minFetchedAt) : undefined
+      )
+    );
+
+  const result = await query.limit(1);
+  return result.length > 0 ? result[0] : undefined;
+}
+
+export async function cacheUvData(data: NewUvDataCache) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  return db.insert(uvDataCache).values(data);
+}
+
+// Route History
+export async function saveRouteHistory(route: NewRouteHistory) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  return db.insert(routeHistory).values(route);
+}
+
+// Notification Settings
+export async function getNotificationSettings(userId: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+
+  const result = await db
+    .select()
+    .from(notificationSettings)
+    .where(eq(notificationSettings.userId, userId))
+    .limit(1);
+
+  return result.length > 0 ? result[0] : undefined;
+}
+
+export async function updateNotificationSettings(userId: number, updates: Partial<NewNotificationSettings>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  return db
+    .update(notificationSettings)
+    .set(updates)
+    .where(eq(notificationSettings.userId, userId));
+}
+
+// Notification History
 export async function getNotificationHistory(userId: number, limit: number = 20) {
   const db = await getDb();
   if (!db) {

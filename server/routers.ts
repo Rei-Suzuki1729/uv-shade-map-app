@@ -5,20 +5,27 @@ import { systemRouter } from "./_core/systemRouter";
 import { publicProcedure, protectedProcedure, router } from "./_core/trpc";
 import {
   getDb,
+  getCachedUvData,
+  cacheUvData,
+  getFavoriteLocations,
+  addFavoriteLocation,
+  deleteFavoriteLocation,
+  getSearchHistory,
+  addSearchHistory,
+  saveRouteHistory,
+  getNotificationSettings,
+  updateNotificationSettings,
   getNotificationHistory,
   markNotificationAsRead,
   markAllNotificationsAsRead,
 } from './db';
 import { fetchUVDataFromOpenMeteo } from '../lib/open-meteo-service';
 import { searchAddress } from '../lib/geocoding-service';
-import { 
-  favoriteLocations, 
-  searchHistory, 
-  uvDataCache, 
-  routeHistory,
-  notificationSettings,
-} from '../drizzle/schema';
-import { eq, and, gte, desc } from 'drizzle-orm';
+import { notificationSettings } from '../drizzle/schema';
+import { eq } from 'drizzle-orm';
+import { generateShadeTiles, generateSampleBuildings } from './worker-client';
+import { join } from 'path';
+import { existsSync } from 'fs';
 
 export const appRouter = router({
   // if you need to use socket.io, read and register route in server/_core/index.ts, all api should start with '/api/' so that the gateway can route correctly
@@ -43,36 +50,19 @@ export const appRouter = router({
       }))
       .query(async ({ input }) => {
         const { latitude, longitude } = input;
-        const latStr = latitude.toFixed(3);
-        const lngStr = longitude.toFixed(3);
         const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000);
         
-        const db = await getDb();
-        if (!db) {
-          throw new Error('Database not available');
-        }
+        const cached = await getCachedUvData(latitude, longitude, fiveMinutesAgo);
         
-        const cached = await db
-          .select()
-          .from(uvDataCache)
-          .where(
-            and(
-              eq(uvDataCache.latitude, latStr),
-              eq(uvDataCache.longitude, lngStr),
-              gte(uvDataCache.fetchedAt, fiveMinutesAgo)
-            )
-          )
-          .limit(1);
-        
-        if (cached.length > 0) {
+        if (cached) {
           return {
             source: 'cache' as const,
             data: {
-              uvIndex: parseFloat(cached[0].uvIndex),
-              uvMax: cached[0].uvMax ? parseFloat(cached[0].uvMax) : undefined,
-              uvMaxTime: cached[0].uvMaxTime || undefined,
-              safeExposureTime: cached[0].safeExposureTime || undefined,
-              timestamp: cached[0].fetchedAt.toISOString(),
+              uvIndex: parseFloat(cached.uvIndex),
+              uvMax: cached.uvMax ? parseFloat(cached.uvMax) : undefined,
+              uvMaxTime: cached.uvMaxTime || undefined,
+              safeExposureTime: cached.safeExposureTime || undefined,
+              timestamp: cached.fetchedAt.toISOString(),
             },
           };
         }
@@ -103,9 +93,9 @@ export const appRouter = router({
           };
         }
         
-        await db.insert(uvDataCache).values({
-          latitude: latStr,
-          longitude: lngStr,
+        await cacheUvData({
+          latitude: latitude.toFixed(3),
+          longitude: longitude.toFixed(3),
           uvIndex: uvData.uvIndex.toFixed(2),
           uvMax: uvData.uvMax.toFixed(2),
           uvMaxTime: uvData.uvMaxTime,
@@ -124,13 +114,7 @@ export const appRouter = router({
   favorites: router({
     list: protectedProcedure
       .query(async ({ ctx }) => {
-        const db = await getDb();
-        if (!db) throw new Error('Database not available');
-        const locations = await db
-          .select()
-          .from(favoriteLocations)
-          .where(eq(favoriteLocations.userId, ctx.user.id))
-          .orderBy(desc(favoriteLocations.createdAt));
+        const locations = await getFavoriteLocations(ctx.user.id);
         
         return locations.map((loc: any) => ({
           ...loc,
@@ -147,9 +131,7 @@ export const appRouter = router({
         longitude: z.number(),
       }))
       .mutation(async ({ ctx, input }) => {
-        const db = await getDb();
-        if (!db) throw new Error('Database not available');
-        const result = await db.insert(favoriteLocations).values({
+        const result = await addFavoriteLocation({
           userId: ctx.user.id,
           name: input.name,
           address: input.address,
@@ -165,17 +147,7 @@ export const appRouter = router({
         id: z.number(),
       }))
       .mutation(async ({ ctx, input }) => {
-        const db = await getDb();
-        if (!db) throw new Error('Database not available');
-        await db
-          .delete(favoriteLocations)
-          .where(
-            and(
-              eq(favoriteLocations.id, input.id),
-              eq(favoriteLocations.userId, ctx.user.id)
-            )
-          );
-        
+        await deleteFavoriteLocation(input.id, ctx.user.id);
         return { success: true };
       }),
   }),
@@ -186,14 +158,7 @@ export const appRouter = router({
         limit: z.number().default(20),
       }))
       .query(async ({ ctx, input }) => {
-        const db = await getDb();
-        if (!db) throw new Error('Database not available');
-        const history = await db
-          .select()
-          .from(searchHistory)
-          .where(eq(searchHistory.userId, ctx.user.id))
-          .orderBy(desc(searchHistory.searchedAt))
-          .limit(input.limit);
+        const history = await getSearchHistory(ctx.user.id, input.limit);
         
         return history.map((h: any) => ({
           ...h,
@@ -210,9 +175,7 @@ export const appRouter = router({
         resultCount: z.number().default(0),
       }))
       .mutation(async ({ ctx, input }) => {
-        const db = await getDb();
-        if (!db) throw new Error('Database not available');
-        await db.insert(searchHistory).values({
+        await addSearchHistory({
           userId: ctx.user.id,
           query: input.query,
           latitude: input.latitude?.toString(),
@@ -269,6 +232,76 @@ export const appRouter = router({
   }),
 
   routes: router({
+    search: publicProcedure
+      .input(z.object({
+        start: z.object({
+          latitude: z.number(),
+          longitude: z.number(),
+        }),
+        end: z.object({
+          latitude: z.number(),
+          longitude: z.number(),
+        }),
+        profile: z.enum(['driving', 'walking', 'cycling']).default('walking'),
+      }))
+      .mutation(async ({ input }) => {
+        const { start, end, profile } = input;
+        const OSRM_BASE_URL = 'https://router.project-osrm.org';
+
+        try {
+          const url = `${OSRM_BASE_URL}/route/v1/${profile}/` +
+            `${start.longitude},${start.latitude};` +
+            `${end.longitude},${end.latitude}` +
+            `?overview=full&geometries=geojson&steps=true`;
+
+          const response = await fetch(url);
+
+          if (!response.ok) {
+            throw new Error(`OSRM API error: ${response.status}`);
+          }
+
+          const data = await response.json();
+
+          if (!data.routes || data.routes.length === 0) {
+            return { success: false, route: null };
+          }
+
+          const route = data.routes[0];
+
+          // GeoJSON座標を変換 (経度, 緯度) -> {latitude, longitude}
+          const geometry = route.geometry.coordinates.map(
+            (coord: [number, number]) => ({
+              longitude: coord[0],
+              latitude: coord[1],
+            })
+          );
+
+          // ステップ情報を変換
+          const steps = (route.legs[0]?.steps || []).map((step: any) => ({
+            distance: step.distance,
+            duration: step.duration,
+            instruction: step.maneuver?.instruction || '',
+            coordinates: step.geometry.coordinates.map((coord: [number, number]) => ({
+              longitude: coord[0],
+              latitude: coord[1],
+            })),
+          }));
+
+          return {
+            success: true,
+            route: {
+              distance: route.distance,
+              duration: route.duration,
+              geometry,
+              steps,
+            },
+          };
+        } catch (error) {
+          console.error('Route search error:', error);
+          return { success: false, route: null, error: String(error) };
+        }
+      }),
+
     save: protectedProcedure
       .input(z.object({
         startName: z.string().optional(),
@@ -284,9 +317,7 @@ export const appRouter = router({
         uvExposure: z.number().optional(),
       }))
       .mutation(async ({ ctx, input }) => {
-        const db = await getDb();
-        if (!db) throw new Error('Database not available');
-        await db.insert(routeHistory).values({
+        await saveRouteHistory({
           userId: ctx.user.id,
           startName: input.startName,
           startLat: input.startLat.toString(),
@@ -300,23 +331,114 @@ export const appRouter = router({
           shadePercentage: input.shadePercentage?.toString(),
           uvExposure: input.uvExposure?.toString(),
         });
-        
+
         return { success: true };
+      }),
+  }),
+
+  shade: router({
+    generateTiles: publicProcedure
+      .input(z.object({
+        bounds: z.object({
+          north: z.number(),
+          south: z.number(),
+          east: z.number(),
+          west: z.number(),
+        }),
+        startTime: z.string(), // ISO 8601形式
+        endTime: z.string(),   // ISO 8601形式
+        stepMinutes: z.number().default(10), // 時間刻み（分）
+        zooms: z.array(z.number()).default([15, 16, 17]), // ズームレベル
+      }))
+      .mutation(async ({ input }) => {
+        const jobId = `shade-job-${Date.now()}`;
+
+        console.log('Shade tile generation requested:', {
+          jobId,
+          bounds: input.bounds,
+          startTime: input.startTime,
+          endTime: input.endTime,
+          stepMinutes: input.stepMinutes,
+          zooms: input.zooms,
+        });
+
+        // 建物データのパスを確認（PoC用サンプルデータ）
+        const buildingsPath = join(process.cwd(), 'server', 'worker', 'data', 'buildings-sample.geojson');
+
+        // 建物データが存在しない場合は生成
+        if (!existsSync(buildingsPath)) {
+          console.log('Sample buildings data not found, generating...');
+          try {
+            await generateSampleBuildings(input.bounds, buildingsPath, 10);
+            console.log('Sample buildings data generated successfully');
+          } catch (error) {
+            console.error('Failed to generate sample buildings:', error);
+            return {
+              success: false,
+              jobId,
+              message: 'Failed to generate sample buildings data',
+              error: String(error),
+            };
+          }
+        }
+
+        // 非同期でPythonワーカーを起動（バックグラウンド実行）
+        // PoCでは同期実行だが、本番では非同期・ジョブキューに投げる
+        try {
+          const result = await generateShadeTiles(jobId, {
+            bounds: input.bounds,
+            startTime: input.startTime,
+            endTime: input.endTime,
+            stepMinutes: input.stepMinutes,
+            zooms: input.zooms,
+          }, buildingsPath);
+
+          return {
+            success: result.success,
+            jobId,
+            tilesGenerated: result.tiles_generated,
+            timeBuckets: result.time_buckets,
+            message: 'Tile generation completed',
+          };
+        } catch (error) {
+          console.error('Shade tile generation failed:', error);
+          return {
+            success: false,
+            jobId,
+            message: 'Tile generation failed',
+            error: String(error),
+          };
+        }
+      }),
+
+    getTileStatus: publicProcedure
+      .input(z.object({
+        jobId: z.string(),
+      }))
+      .query(async ({ input }) => {
+        // TODO: ジョブステータスをチェックする実装
+        // PoCでは仕様定義のみ
+        console.log('Checking tile generation status:', input.jobId);
+
+        return {
+          jobId: input.jobId,
+          status: 'done' as const, // queued | running | done | error
+          progress: 100,
+          message: 'PoC: Status check not yet implemented',
+        };
       }),
   }),
 
   notifications: router({
     getSettings: protectedProcedure
       .query(async ({ ctx }) => {
-        const db = await getDb();
-        if (!db) throw new Error('Database not available');
-        const settings = await db
-          .select()
-          .from(notificationSettings)
-          .where(eq(notificationSettings.userId, ctx.user.id))
-          .limit(1);
+        const settings = await getNotificationSettings(ctx.user.id);
         
-        if (settings.length === 0) {
+        if (!settings) {
+          // No settings found, create default
+          const db = await getDb();
+          if (!db) throw new Error('Database not available');
+
           await db.insert(notificationSettings).values({
             userId: ctx.user.id,
             highUvAlert: 1,
@@ -334,13 +456,12 @@ export const appRouter = router({
           };
         }
         
-        const s = settings[0];
         return {
-          highUvAlert: s.highUvAlert === 1,
-          highUvThreshold: parseFloat(s.highUvThreshold),
-          shadeReminder: s.shadeReminder === 1,
-          shadeReminderInterval: s.shadeReminderInterval,
-          pushToken: s.pushToken,
+          highUvAlert: settings.highUvAlert === 1,
+          highUvThreshold: parseFloat(settings.highUvThreshold),
+          shadeReminder: settings.shadeReminder === 1,
+          shadeReminderInterval: settings.shadeReminderInterval,
+          pushToken: settings.pushToken,
         };
       }),
 
@@ -353,9 +474,6 @@ export const appRouter = router({
         pushToken: z.string().optional(),
       }))
       .mutation(async ({ ctx, input }) => {
-        const db = await getDb();
-        if (!db) throw new Error('Database not available');
-        
         const updates: any = {};
         if (input.highUvAlert !== undefined) updates.highUvAlert = input.highUvAlert ? 1 : 0;
         if (input.highUvThreshold !== undefined) updates.highUvThreshold = input.highUvThreshold.toString();
@@ -363,10 +481,7 @@ export const appRouter = router({
         if (input.shadeReminderInterval !== undefined) updates.shadeReminderInterval = input.shadeReminderInterval;
         if (input.pushToken !== undefined) updates.pushToken = input.pushToken;
         
-        await db
-          .update(notificationSettings)
-          .set(updates)
-          .where(eq(notificationSettings.userId, ctx.user.id));
+        await updateNotificationSettings(ctx.user.id, updates);
         
         return { success: true };
       }),

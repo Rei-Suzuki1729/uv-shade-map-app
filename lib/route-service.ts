@@ -23,10 +23,10 @@ export interface Route {
   steps: RouteStep[];
 }
 
-const OSRM_BASE_URL = 'https://router.project-osrm.org';
+import { getApiBaseUrl } from '@/constants/oauth';
 
 /**
- * 2点間のルートを検索
+ * 2点間のルートを検索（server経由）
  */
 export async function searchRoute(
   start: RoutePoint,
@@ -34,50 +34,39 @@ export async function searchRoute(
   profile: 'driving' | 'walking' | 'cycling' = 'walking'
 ): Promise<Route | null> {
   try {
-    const url = `${OSRM_BASE_URL}/route/v1/${profile}/` +
-      `${start.longitude},${start.latitude};` +
-      `${end.longitude},${end.latitude}` +
-      `?overview=full&geometries=geojson&steps=true`;
+    const baseUrl = getApiBaseUrl();
+    const url = `${baseUrl}/api/trpc/routes.search`;
 
-    const response = await fetch(url);
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      credentials: 'include',
+      body: JSON.stringify({
+        start: {
+          latitude: start.latitude,
+          longitude: start.longitude,
+        },
+        end: {
+          latitude: end.latitude,
+          longitude: end.longitude,
+        },
+        profile,
+      }),
+    });
 
     if (!response.ok) {
-      throw new Error(`OSRM API error: ${response.status}`);
+      throw new Error(`Route API error: ${response.status}`);
     }
 
     const data = await response.json();
 
-    if (!data.routes || data.routes.length === 0) {
+    if (!data.result?.data?.success || !data.result.data.route) {
       return null;
     }
 
-    const route = data.routes[0];
-    
-    // GeoJSON座標を変換 (経度, 緯度) -> {latitude, longitude}
-    const geometry: RoutePoint[] = route.geometry.coordinates.map(
-      (coord: [number, number]) => ({
-        longitude: coord[0],
-        latitude: coord[1],
-      })
-    );
-
-    // ステップ情報を変換
-    const steps: RouteStep[] = (route.legs[0]?.steps || []).map((step: any) => ({
-      distance: step.distance,
-      duration: step.duration,
-      instruction: step.maneuver?.instruction || '',
-      coordinates: step.geometry.coordinates.map((coord: [number, number]) => ({
-        longitude: coord[0],
-        latitude: coord[1],
-      })),
-    }));
-
-    return {
-      distance: route.distance,
-      duration: route.duration,
-      geometry,
-      steps,
-    };
+    return data.result.data.route;
   } catch (error) {
     console.error('Route search error:', error);
     return null;
@@ -86,6 +75,7 @@ export async function searchRoute(
 
 /**
  * 複数の経由地を通るルートを検索
+ * TODO: server側にwaypointsエンドポイントを追加後に実装
  */
 export async function searchRouteWithWaypoints(
   points: RoutePoint[],
@@ -95,61 +85,8 @@ export async function searchRouteWithWaypoints(
     throw new Error('At least 2 points are required');
   }
 
-  try {
-    const coordinates = points
-      .map(p => `${p.longitude},${p.latitude}`)
-      .join(';');
-
-    const url = `${OSRM_BASE_URL}/route/v1/${profile}/${coordinates}` +
-      `?overview=full&geometries=geojson&steps=true`;
-
-    const response = await fetch(url);
-
-    if (!response.ok) {
-      throw new Error(`OSRM API error: ${response.status}`);
-    }
-
-    const data = await response.json();
-
-    if (!data.routes || data.routes.length === 0) {
-      return null;
-    }
-
-    const route = data.routes[0];
-    
-    const geometry: RoutePoint[] = route.geometry.coordinates.map(
-      (coord: [number, number]) => ({
-        longitude: coord[0],
-        latitude: coord[1],
-      })
-    );
-
-    // 全てのlegsからstepsを結合
-    const steps: RouteStep[] = [];
-    for (const leg of route.legs || []) {
-      for (const step of leg.steps || []) {
-        steps.push({
-          distance: step.distance,
-          duration: step.duration,
-          instruction: step.maneuver?.instruction || '',
-          coordinates: step.geometry.coordinates.map((coord: [number, number]) => ({
-            longitude: coord[0],
-            latitude: coord[1],
-          })),
-        });
-      }
-    }
-
-    return {
-      distance: route.distance,
-      duration: route.duration,
-      geometry,
-      steps,
-    };
-  } catch (error) {
-    console.error('Route search with waypoints error:', error);
-    return null;
-  }
+  console.warn('searchRouteWithWaypoints is not yet implemented via server');
+  return null;
 }
 
 /**
