@@ -5,6 +5,7 @@ import { type Building } from '@/lib/shade-calculator';
 import { type ShadowPolygon } from '@/lib/advanced-shade-calculator';
 import { type UVData } from '@/lib/uv-service';
 import { getUVColor } from '@/constants/uv';
+import { getCurrentShadeTileUrl } from '@/lib/tile-utils';
 
 interface NativeMapViewProps {
   location: { latitude: number; longitude: number } | null;
@@ -33,8 +34,11 @@ export function NativeMapView({
 
   /* eslint-disable @typescript-eslint/no-require-imports */
   const MapViewComponent = require('react-native-maps').default;
-  const { Polygon, Polyline, Marker, PROVIDER_GOOGLE } = require('react-native-maps');
+  const { Polygon, Polyline, Marker, UrlTile, PROVIDER_GOOGLE } = require('react-native-maps');
   /* eslint-enable @typescript-eslint/no-require-imports */
+
+  // 日陰タイルURL（現在時刻のタイムバケット）
+  const shadeTileUrl = getCurrentShadeTileUrl();
 
   const darkMapStyle = [
     { elementType: 'geometry', stylers: [{ color: '#1d2c4d' }] },
@@ -62,25 +66,16 @@ export function NativeMapView({
       onRegionChangeComplete={onRegionChange}
       customMapStyle={isDark ? darkMapStyle : undefined}
     >
-      {mapMode === 'shade' && buildings.map((building) => (
-        <Polygon
-          key={`building-${building.id}`}
-          coordinates={building.coordinates}
-          fillColor={isDark ? 'rgba(100, 116, 139, 0.6)' : 'rgba(71, 85, 105, 0.5)'}
-          strokeColor={isDark ? '#64748B' : '#475569'}
-          strokeWidth={1}
+      {/* 日陰タイルオーバーレイ（PoC: Polygon → UrlTile に変更） */}
+      {mapMode === 'shade' && (
+        <UrlTile
+          urlTemplate={shadeTileUrl}
+          zIndex={1}
+          maximumZ={19}
+          minimumZ={10}
+          flipY={false}
         />
-      ))}
-
-      {mapMode === 'shade' && shadows.map((shadow, index) => (
-        <Polygon
-          key={`shadow-${shadow.buildingId}-${index}`}
-          coordinates={shadow.coordinates}
-          fillColor={`rgba(30, 58, 95, ${shadow.opacity * 0.7})`}
-          strokeColor="transparent"
-          strokeWidth={0}
-        />
-      ))}
+      )}
 
       {mapMode === 'heatmap' && uvData && location && (
         <Polygon
