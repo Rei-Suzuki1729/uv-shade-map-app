@@ -1,40 +1,31 @@
 version: '3.8'
 
 services:
-  # アプリケーション開発サーバー
   app:
-    build:
-      context: .
-      dockerfile: Dockerfile
+    build: .
     ports:
-      - "8081:8081"  # Expo Metro Bundler
-      - "3000:3000"  # Backend API
+      - "3000:3000"
+      - "8081:8081"
+    environment:
+      - NODE_ENV=development
+      - DATABASE_URL=postgres://postgres:password@db:5432/uv_shade_map
     volumes:
       - .:/app
       - /app/node_modules
-      - /app/.expo
-    environment:
-      - NODE_ENV=development
-      - EXPO_PORT=8081
-      - PORT=3000
-      - DATABASE_URL=mysql://root:password@db:3306/uv_shade_map
     depends_on:
       - db
-    command: pnpm dev
-    stdin_open: true
     tty: true
 
-  # データベース
   db:
-    image: mysql:8.0
-    ports:
-      - "3306:3306"
+    image: postgres:15
     environment:
-      - MYSQL_ROOT_PASSWORD=password
-      - MYSQL_DATABASE=uv_shade_map
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=password
+      - POSTGRES_DB=uv_shade_map
+    ports:
+      - "5432:5432"
     volumes:
-      - db_data:/var/lib/mysql
-    command: --default-authentication-plugin=mysql_native_password
+      - db_data:/var/lib/postgresql/data
 
 volumes:
   db_data:

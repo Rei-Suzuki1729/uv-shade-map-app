@@ -150,9 +150,9 @@ export const appRouter = router({
           address: input.address,
           latitude: input.latitude.toString(),
           longitude: input.longitude.toString(),
-        });
+        }).returning({ id: favoriteLocations.id });
         
-        return { success: true, id: result[0].insertId };
+        return { success: true, id: result[0].id };
       }),
 
     delete: protectedProcedure

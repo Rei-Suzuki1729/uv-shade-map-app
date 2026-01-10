@@ -141,7 +141,7 @@ pnpm build
 
 ```env
 # データベース接続
-DATABASE_URL=mysql://root:password@localhost:3306/uv_shade_map
+DATABASE_URL=postgres://postgres:password@localhost:5432/uv_shade_map
 
 # API設定（オプション）
 # OPEN_METEO_API_KEY=your_api_key
