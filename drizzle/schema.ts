@@ -25,8 +25,6 @@ export const users = mysqlTable("users", {
 export type User = typeof users.$inferSelect;
 export type InsertUser = typeof users.$inferInsert;
 
-// TODO: Add your tables here
-
 /**
  * お気に入り場所テーブル
  * ユーザーが保存した場所を管理
