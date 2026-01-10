@@ -126,7 +126,7 @@ export async function addFavoriteLocation(location: NewFavoriteLocation) {
   if (!db) throw new Error("Database not available");
 
   const result = await db.insert(favoriteLocations).values(location).returning({ id: favoriteLocations.id });
-  // Return format compatible with what might be expected (mimicking mysql2's insertId if possible, but returning object with ID is better for Postgres)
+  // Return object with ID to be consistent with potential usage expectations
   return result[0];
 }
 
@@ -220,9 +220,15 @@ export async function updateNotificationSettings(userId: number, updates: Partia
   const db = await getDb();
   if (!db) throw new Error("Database not available");
 
+  // Manually update updatedAt since Postgres doesn't support onUpdateNow in schema
+  const updatesWithTimestamp = {
+    ...updates,
+    updatedAt: new Date(),
+  };
+
   return db
     .update(notificationSettings)
-    .set(updates)
+    .set(updatesWithTimestamp)
     .where(eq(notificationSettings.userId, userId));
 }
 

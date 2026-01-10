@@ -16,7 +16,7 @@ export const users = pgTable("users", {
   name: text("name"),
   email: varchar("email", { length: 320 }),
   loginMethod: varchar("loginMethod", { length: 64 }),
-  role: text("role", { enum: ["user", "admin"] }).default("user").notNull(),
+  role: text("role").default("user").notNull(), // Enum behavior handled by app logic
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().notNull(), // Managed by app logic or trigger
   lastSignedIn: timestamp("lastSignedIn").defaultNow().notNull(),
