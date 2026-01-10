@@ -19,6 +19,7 @@ import { MapModeSelector } from '@/components/map-mode-selector';
 import { SearchBar } from '@/components/search-bar';
 import { LocationButton } from '@/components/location-button';
 import { LocationInfoCard } from '@/components/location-info-card';
+import { TimeSlider } from '@/components/time-slider';
 import { useLocation } from '@/hooks/use-location';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useRoute } from '@/lib/route-context';
@@ -37,6 +38,7 @@ export default function MapScreen() {
 
   const { location, refresh: refreshLocation } = useLocation();
   const { currentRoute, isRouteVisible } = useRoute();
+  const [currentTime, setCurrentTime] = React.useState(new Date());
 
   // マップデータと状態管理のフック
   const {
@@ -46,7 +48,7 @@ export default function MapScreen() {
     sunPosition,
     isLoading: isLoadingData,
     error: dataError
-  } = useMapData(location);
+  } = useMapData(location, currentTime);
 
   const {
     mapMode,
@@ -167,14 +169,22 @@ export default function MapScreen() {
           </View>
         )}
 
-        {/* 日陰モード時の情報 */}
+        {/* 日陰モード時の情報とスライダー */}
         {mapMode === 'shade' && sunPosition && (
-          <View style={styles.shadeInfo}>
-            <Text style={[styles.shadeInfoText, { color: isDark ? '#94A3B8' : '#64748B' }]}>
-              {isSunAboveHorizon(sunPosition)
-                ? `${shadows.length}箇所の日陰エリアを表示中`
-                : '現在は夜間のため日陰表示はありません'}
-            </Text>
+          <View>
+            <View style={styles.shadeInfo}>
+              <Text style={[styles.shadeInfoText, { color: isDark ? '#94A3B8' : '#64748B' }]}>
+                {isSunAboveHorizon(sunPosition)
+                  ? `${shadows.length}箇所の日陰エリアを表示中`
+                  : '現在は夜間のため日陰表示はありません'}
+              </Text>
+            </View>
+            <View style={styles.sliderWrapper}>
+              <TimeSlider
+                currentTime={currentTime}
+                onTimeChange={setCurrentTime}
+              />
+            </View>
           </View>
         )}
 
@@ -267,6 +277,10 @@ const styles = StyleSheet.create({
   },
   shadeInfoText: {
     fontSize: 13,
+  },
+  sliderWrapper: {
+    marginTop: 8,
+    marginBottom: 8,
   },
   loadingText: {
     marginTop: 16,

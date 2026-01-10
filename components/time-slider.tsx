@@ -3,7 +3,7 @@
  * 日陰の時間変化をシミュレーション
  */
 
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect, useRef } from 'react';
 import {
   View,
   Text,
@@ -83,8 +83,38 @@ export function TimeSlider({
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     }
     setIsPlaying(!isPlaying);
-    // TODO: アニメーション実装
   }, [isPlaying]);
+
+  // アニメーション処理
+  useEffect(() => {
+    let intervalId: NodeJS.Timeout;
+
+    if (isPlaying) {
+      intervalId = setInterval(() => {
+        const nextTime = new Date(currentTime);
+        // 50msごとに2分進める（1秒で40分進む）
+        nextTime.setMinutes(currentTime.getMinutes() + 2);
+
+        // 日没を超えたら停止
+        const nextMinutes = nextTime.getHours() * 60 + nextTime.getMinutes();
+        if (nextMinutes >= endMinutes) {
+          setIsPlaying(false);
+          // 日没ちょうどに合わせる
+          const sunset = new Date(currentTime);
+          sunset.setHours(Math.floor(endMinutes / 60), endMinutes % 60, 0, 0);
+          onTimeChange(sunset);
+        } else {
+          onTimeChange(nextTime);
+        }
+      }, 50);
+    }
+
+    return () => {
+      if (intervalId) {
+        clearInterval(intervalId);
+      }
+    };
+  }, [isPlaying, currentTime, endMinutes, onTimeChange]);
 
   return (
     <View style={[
@@ -156,6 +186,7 @@ export function TimeSlider({
         
         <Pressable
           onPress={togglePlay}
+          testID="play-button"
           style={({ pressed }) => [
             styles.playButton,
             { opacity: pressed ? 0.8 : 1 }
