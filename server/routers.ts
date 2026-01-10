@@ -436,13 +436,6 @@ export const appRouter = router({
         
         if (!settings) {
           // No settings found, create default
-          // We can use direct DB insert here or add another helper function.
-          // Since getNotificationSettings is just a getter, the router handles logic.
-          // But "add feature queries" suggests we should have `createDefaultNotificationSettings` or similar.
-          // I will use direct DB via getDb() here OR better, just use getDb() as the function is not in db.ts yet?
-          // Wait, I implemented updateNotificationSettings, but not create.
-          // The previous code did: db.insert(...).
-
           const db = await getDb();
           if (!db) throw new Error('Database not available');
 
