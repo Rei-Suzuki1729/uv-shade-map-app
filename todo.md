@@ -160,7 +160,9 @@
 - [x] 重複コードの特定（index.tsx 809行、shade-route-service.ts 499行）
 - [x] 型定義の整理と共通化（types/map.ts作成）
 - [x] 定数の外部化（constants/map.ts作成）
-- [ ] 大きなコンポーネントの分割（将来の改善）
+- [x] index.tsxの分割（809行→284行、WebMapView、NativeMapViewを分離）
+- [x] 重複コードの削減（useMapData、useMapControls、useRouteSearchフック抽出）
+- [x] ローカル開発環境の改善（DEVELOPMENT.md、VS Code設定作成）
 
 ### Docker化
 - [x] Dockerfileの作成（Node.js 22 + pnpm 9.12.0）
